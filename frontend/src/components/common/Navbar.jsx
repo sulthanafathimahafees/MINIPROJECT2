@@ -71,14 +71,14 @@ const Navbar = () => {
           </div>
 
           {/* CENTER SECTION: Clean Single Rounded Navigation Pill Capsule */}
-          <div className="flex-none hidden md:flex items-center justify-center">
-            <nav className="inline-flex items-center gap-2.5 sm:gap-3 lg:gap-4 p-2 rounded-full bg-white/90 dark:bg-slate-800/90 backdrop-blur-md border border-slate-200/90 dark:border-slate-700/90 shadow-sm whitespace-nowrap">
+          <div className="flex-none hidden md:flex items-center justify-center mx-2">
+            <nav className="inline-flex items-center gap-1.5 sm:gap-2 lg:gap-2.5 p-1.5 rounded-full bg-white/90 dark:bg-slate-800/90 backdrop-blur-md border border-slate-200/90 dark:border-slate-700/90 shadow-sm whitespace-nowrap">
               {navItems.map((item) => (
                 <NavLink
                   key={item.path}
                   to={item.path}
                   className={({ isActive }) =>
-                    `px-6 sm:px-7 lg:px-8 py-2.5 sm:py-3 rounded-full text-[15px] sm:text-[16px] lg:text-[17px] font-semibold transition-all duration-200 whitespace-nowrap ${
+                    `px-4 sm:px-5 lg:px-6 py-2 sm:py-2.5 rounded-full text-sm sm:text-base font-semibold transition-all duration-200 whitespace-nowrap ${
                       isActive
                         ? 'bg-[#2563EB] text-white shadow-md shadow-[#2563EB]/30'
                         : 'text-slate-700 dark:text-slate-200 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100/80 dark:hover:bg-slate-700/60'
@@ -92,12 +92,12 @@ const Navbar = () => {
           </div>
 
           {/* RIGHT SECTION: Action Controls (Theme Toggle, Login, Get Started) */}
-          <div className="flex-1 hidden md:flex items-center justify-end gap-[18px] shrink-0">
+          <div className="flex-1 hidden md:flex items-center justify-end gap-3 shrink-0">
             
             {/* Theme Toggle Button */}
             <button
               onClick={toggleTheme}
-              className="p-3 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:text-[#2563EB] dark:hover:text-cyan-400 border border-slate-200 dark:border-slate-700 shadow-xs transition-all duration-200 shrink-0"
+              className="p-2.5 sm:p-3 rounded-full bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:text-[#2563EB] dark:hover:text-cyan-400 border border-slate-200 dark:border-slate-700 shadow-xs hover:shadow-md transition-all duration-200 shrink-0 cursor-pointer"
               title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
               aria-label="Toggle theme"
             >

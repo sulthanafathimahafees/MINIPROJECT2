@@ -211,6 +211,13 @@ router.post('/admin/sales-requests/:id/approve', authenticateToken, authorizeRol
       return res.status(404).json({ success: false, message: 'Sales Person request not found.' });
     }
 
+    try {
+      await query(
+        `UPDATE public.users SET role = 'SALES_PERSON', status = 'ACTIVE', updated_at = CURRENT_TIMESTAMP WHERE user_id = $1 OR LOWER(email) = LOWER($2)`,
+        [targetUserId, updateRes.rows[0].email]
+      );
+    } catch (e) {}
+
     return res.json({
       success: true,
       message: 'Sales Person access approved successfully.',
@@ -245,6 +252,13 @@ router.post('/admin/sales-requests/:id/reject', authenticateToken, authorizeRole
     if (updateRes.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'Sales Person request not found.' });
     }
+
+    try {
+      await query(
+        `UPDATE public.users SET role = 'CUSTOMER', status = 'REJECTED', updated_at = CURRENT_TIMESTAMP WHERE user_id = $1 OR LOWER(email) = LOWER($2)`,
+        [targetUserId, updateRes.rows[0].email]
+      );
+    } catch (e) {}
 
     return res.json({
       success: true,

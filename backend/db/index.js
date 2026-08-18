@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { runCustomerDashboardMigration } from './initCustomerDashboard.js';
+import { runSalesDashboardMigration } from './initSalesDashboard.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -514,6 +515,7 @@ export const initDb = async () => {
     await autoSeedProductsIfEmpty();
     await autoSeedOrdersIfEmpty();
     await runCustomerDashboardMigration();
+    await runSalesDashboardMigration();
   } catch (err) {
     console.error('[PostgreSQL Initialization Error]', err.message);
   }

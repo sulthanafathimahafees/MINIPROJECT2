@@ -339,11 +339,18 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Find user in optibuy.tbl_users by email
-    const userRes = await query(
+    // Find user in optibuy.tbl_users or public.users by email
+    let userRes = await query(
       `SELECT user_id, full_name, email, phone, password_hash, role, status, created_at FROM ${TABLE_NAME} WHERE LOWER(email) = $1`,
       [cleanEmail]
     );
+
+    if (userRes.rows.length === 0) {
+      userRes = await query(
+        `SELECT user_id, full_name, email, phone, password_hash, role, status, created_at FROM public.users WHERE LOWER(email) = $1`,
+        [cleanEmail]
+      );
+    }
 
     if (userRes.rows.length === 0) {
       return res.status(401).json({
