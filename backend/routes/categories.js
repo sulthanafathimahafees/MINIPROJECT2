@@ -142,4 +142,42 @@ router.put('/:id', authenticateToken, authorizeRoles('ADMIN'), async (req, res) 
   }
 });
 
+/**
+ * @route   DELETE /api/categories/:id
+ * @desc    Admin endpoint: Delete category
+ * @access  Private (Admin only)
+ */
+router.delete('/:id', authenticateToken, authorizeRoles('ADMIN'), async (req, res) => {
+  try {
+    const categoryId = parseInt(req.params.id, 10);
+
+    // Check if category has products
+    const productCheck = await query(
+      `SELECT COUNT(*) FROM public.products WHERE category_id = $1`,
+      [categoryId]
+    );
+
+    if (parseInt(productCheck.rows[0].count, 10) > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete category with associated products. Reassign products first.'
+      });
+    }
+
+    await query(`DELETE FROM ${TABLE_CATEGORIES} WHERE category_id = $1`, [categoryId]);
+
+    // Mirror delete in public schema
+    await query(`DELETE FROM public.product_categories WHERE id = $1`, [categoryId]);
+
+    return res.json({
+      success: true,
+      message: 'Category deleted successfully.'
+    });
+
+  } catch (error) {
+    console.error('[Delete Category Error]', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 export default router;
