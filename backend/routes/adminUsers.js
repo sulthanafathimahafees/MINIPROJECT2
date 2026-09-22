@@ -1,6 +1,6 @@
 import express from 'express';
 import { query, schemaName } from '../db/index.js';
-import { authenticateToken, authorizeRoles } from '../middleware/auth.js';
+import { authenticateToken, authorizeRoles, normalizeRole } from '../middleware/auth.js';
 
 const router = express.Router();
 const TABLE_USERS = `${schemaName}.tbl_users`;
@@ -142,6 +142,14 @@ router.patch('/:id/status', authenticateToken, authorizeRoles('ADMIN'), async (r
 
     const targetUser = userRes.rows[0];
 
+    // Safeguard: Do NOT allow self-deactivation
+    if (userId === req.user.userId && cleanStatus !== 'ACTIVE') {
+      return res.status(400).json({
+        success: false,
+        message: 'Security Restriction: You cannot deactivate your own active administrator account.'
+      });
+    }
+
     // Safeguard: Do NOT allow deactivating or suspending main admin
     if (targetUser.email.toLowerCase() === MAIN_ADMIN_EMAIL && cleanStatus !== 'ACTIVE') {
       return res.status(403).json({
@@ -154,6 +162,14 @@ router.patch('/:id/status', authenticateToken, authorizeRoles('ADMIN'), async (r
       `UPDATE ${TABLE_USERS} SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2`,
       [cleanStatus, userId]
     );
+
+    // Synchronize to public.users
+    try {
+      await query(
+        `UPDATE public.users SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2 OR LOWER(email) = LOWER($3)`,
+        [cleanStatus, userId, targetUser.email]
+      );
+    } catch (e) {}
 
     return res.json({
       success: true,
@@ -176,12 +192,12 @@ router.patch('/:id/role', authenticateToken, authorizeRoles('ADMIN'), async (req
     const { role } = req.body;
 
     const allowedRoles = ['CUSTOMER', 'SALES_PERSON', 'ADMIN'];
-    const cleanRole = (role || '').toUpperCase();
+    const cleanRole = normalizeRole(role || '');
 
     if (!allowedRoles.includes(cleanRole)) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid role. Allowed: CUSTOMER, SALES_PERSON, ADMIN'
+        message: 'Invalid role. Allowed: CUSTOMER, SALES_PERSON, SALES_EXECUTIVE, ADMIN'
       });
     }
 
@@ -192,6 +208,14 @@ router.patch('/:id/role', authenticateToken, authorizeRoles('ADMIN'), async (req
     }
 
     const targetUser = userRes.rows[0];
+
+    // Safeguard: Do NOT allow self-demotion
+    if (userId === req.user.userId && cleanRole !== 'ADMIN') {
+      return res.status(400).json({
+        success: false,
+        message: 'Security Restriction: You cannot change the role of your own active administrator account.'
+      });
+    }
 
     // Safeguard: Do NOT allow modifying main admin role
     if (targetUser.email.toLowerCase() === MAIN_ADMIN_EMAIL && cleanRole !== 'ADMIN') {
@@ -205,6 +229,14 @@ router.patch('/:id/role', authenticateToken, authorizeRoles('ADMIN'), async (req
       `UPDATE ${TABLE_USERS} SET role = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2`,
       [cleanRole, userId]
     );
+
+    // Synchronize to public.users
+    try {
+      await query(
+        `UPDATE public.users SET role = $1, updated_at = CURRENT_TIMESTAMP WHERE user_id = $2 OR LOWER(email) = LOWER($3)`,
+        [cleanRole, userId, targetUser.email]
+      );
+    } catch (e) {}
 
     return res.json({
       success: true,
@@ -225,6 +257,14 @@ router.delete('/:id', authenticateToken, authorizeRoles('ADMIN'), async (req, re
   try {
     const userId = parseInt(req.params.id, 10);
 
+    // Safeguard: Do NOT allow self-deletion
+    if (userId === req.user.userId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Security Restriction: You cannot delete your own active administrator account.'
+      });
+    }
+
     const userRes = await query(`SELECT email FROM ${TABLE_USERS} WHERE user_id = $1`, [userId]);
     if (userRes.rows.length === 0) {
       return res.status(404).json({ success: false, message: 'User not found.' });
@@ -241,6 +281,11 @@ router.delete('/:id', authenticateToken, authorizeRoles('ADMIN'), async (req, re
     }
 
     await query(`DELETE FROM ${TABLE_USERS} WHERE user_id = $1`, [userId]);
+
+    // Synchronize to public.users
+    try {
+      await query(`DELETE FROM public.users WHERE user_id = $1 OR LOWER(email) = LOWER($2)`, [userId, targetUser.email]);
+    } catch (e) {}
 
     return res.json({
       success: true,

@@ -39,6 +39,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/categories', categoryRoutes);
 app.use('/api/admin/categories', categoryRoutes);
 app.use('/api/admin/orders', orderRoutes);
+app.use('/api/orders', orderRoutes);
 app.use('/api/reviews', reviewRoutes);
 app.use('/api/sales-person', salesPersonRoutes);
 

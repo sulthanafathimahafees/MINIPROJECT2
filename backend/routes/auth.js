@@ -173,6 +173,7 @@ router.post('/google', async (req, res) => {
       message: 'Google authentication successful',
       token,
       user: {
+        id: user.user_id,
         user_id: user.user_id,
         full_name: user.full_name,
         fullName: user.full_name,
@@ -281,6 +282,25 @@ router.post('/register', async (req, res) => {
 
     const newUser = insertRes.rows[0];
 
+    // Mirror to public.users for customer profile queries
+    try {
+      await query(
+        `INSERT INTO public.users (user_id, full_name, email, phone, password_hash, role, status, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (user_id) DO UPDATE SET
+           full_name = EXCLUDED.full_name,
+           email = EXCLUDED.email,
+           phone = EXCLUDED.phone,
+           password_hash = EXCLUDED.password_hash,
+           role = EXCLUDED.role,
+           status = EXCLUDED.status,
+           created_at = EXCLUDED.created_at`,
+        [newUser.user_id, newUser.full_name, newUser.email, newUser.phone, passwordHash, role, status, newUser.created_at]
+      );
+    } catch (mirrorErr) {
+      console.error('[Auth Register] Mirror to public.users failed:', mirrorErr.message);
+    }
+
     // 7. Generate JWT Token
     const token = jwt.sign(
       { userId: newUser.user_id, email: newUser.email, role: 'CUSTOMER', status: 'ACTIVE' },
@@ -294,6 +314,7 @@ router.post('/register', async (req, res) => {
       message: 'Registration successful',
       token,
       user: {
+        id: newUser.user_id,
         user_id: newUser.user_id,
         full_name: newUser.full_name,
         fullName: newUser.full_name,
@@ -345,11 +366,21 @@ router.post('/login', async (req, res) => {
       [cleanEmail]
     );
 
+    let user;
+    let fromTable = TABLE_NAME;
+
     if (userRes.rows.length === 0) {
       userRes = await query(
         `SELECT user_id, full_name, email, phone, password_hash, role, status, created_at FROM public.users WHERE LOWER(email) = $1`,
         [cleanEmail]
       );
+      
+      if (userRes.rows.length > 0) {
+        user = userRes.rows[0];
+        fromTable = 'public.users';
+      }
+    } else {
+      user = userRes.rows[0];
     }
 
     if (userRes.rows.length === 0) {
@@ -359,9 +390,28 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    const user = userRes.rows[0];
     const userRole = normalizeRole(user.role);
     const userStatus = (user.status || 'ACTIVE').toUpperCase();
+
+    // Mirror user to public.users if found in optibuy.tbl_users but not in public.users
+    if (fromTable === TABLE_NAME) {
+      try {
+        await query(
+          `INSERT INTO public.users (user_id, full_name, email, phone, password_hash, role, status, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT (user_id) DO UPDATE SET
+             full_name = EXCLUDED.full_name,
+             email = EXCLUDED.email,
+             phone = EXCLUDED.phone,
+             password_hash = EXCLUDED.password_hash,
+             role = EXCLUDED.role,
+             status = EXCLUDED.status`,
+          [user.user_id, user.full_name, user.email, user.phone, user.password_hash, user.role, user.status, user.created_at]
+        );
+      } catch (mirrorErr) {
+        console.error('[Auth Login] Mirror to public.users failed:', mirrorErr.message);
+      }
+    }
 
     // 1. Check account status: PENDING
     if (userStatus === 'PENDING') {
@@ -408,6 +458,7 @@ router.post('/login', async (req, res) => {
       message: 'Login successful',
       token,
       user: {
+        id: user.user_id,
         user_id: user.user_id,
         full_name: user.full_name,
         fullName: user.full_name,
@@ -459,6 +510,7 @@ router.get('/me', async (req, res) => {
     return res.json({
       success: true,
       user: {
+        id: user.user_id,
         user_id: user.user_id,
         full_name: user.full_name,
         fullName: user.full_name,

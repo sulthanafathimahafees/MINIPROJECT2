@@ -5,6 +5,7 @@ import { authenticateToken, authorizeRoles } from '../middleware/auth.js';
 
 const router = express.Router();
 const TABLE_USERS = `${schemaName}.tbl_users`;
+const MAIN_ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'optibuyadmin@gmail.com').toLowerCase();
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
@@ -93,7 +94,7 @@ router.get('/sales', authenticateToken, authorizeRoles('SALES_PERSON', 'ADMIN'),
 
 /**
  * @route   GET /api/dashboard/admin
- * @desc    Admin System Management Data & Dynamic Pending Requests Count
+ * @desc    Admin System Management Data & Dynamic Counts from PostgreSQL
  * @access  Private (Admin only)
  */
 router.get('/admin', authenticateToken, authorizeRoles('ADMIN'), async (req, res) => {
@@ -113,6 +114,42 @@ router.get('/admin', authenticateToken, authorizeRoles('ADMIN'), async (req, res
       (u.role === 'SALES_PERSON' || u.role === 'sales' || u.role === 'salesperson') && u.status === 'PENDING'
     ).length;
 
+    // Genuine products & inventory metrics
+    let totalProducts = 0;
+    let lowStockCount = 0;
+    let totalReviewsAnalyzed = 0;
+    let totalAssistanceRequests = 0;
+
+    try {
+      const prodRes = await query(`SELECT COUNT(*) as total, SUM(CASE WHEN stock_quantity > 0 AND stock_quantity <= 5 THEN 1 ELSE 0 END) as low_stock FROM public.products`);
+      if (prodRes.rows.length > 0) {
+        totalProducts = parseInt(prodRes.rows[0].total || 0, 10);
+        lowStockCount = parseInt(prodRes.rows[0].low_stock || 0, 10);
+      }
+    } catch (e) {
+      try {
+        const fallbackRes = await query(`SELECT COUNT(*) as total, SUM(CASE WHEN stock_quantity > 0 AND stock_quantity <= 5 THEN 1 ELSE 0 END) as low_stock FROM ${schemaName}.tbl_products`);
+        if (fallbackRes.rows.length > 0) {
+          totalProducts = parseInt(fallbackRes.rows[0].total || 0, 10);
+          lowStockCount = parseInt(fallbackRes.rows[0].low_stock || 0, 10);
+        }
+      } catch (e2) {}
+    }
+
+    try {
+      const revRes = await query(`SELECT COUNT(*) as total FROM public.product_reviews`);
+      if (revRes.rows.length > 0) {
+        totalReviewsAnalyzed = parseInt(revRes.rows[0].total || 0, 10);
+      }
+    } catch (e) {}
+
+    try {
+      const reqRes = await query(`SELECT COUNT(*) as total FROM public.customer_assistance_requests`);
+      if (reqRes.rows.length > 0) {
+        totalAssistanceRequests = parseInt(reqRes.rows[0].total || 0, 10);
+      }
+    } catch (e) {}
+
     return res.json({
       success: true,
       data: {
@@ -122,9 +159,10 @@ router.get('/admin', authenticateToken, authorizeRoles('ADMIN'), async (req, res
           salesCount,
           adminCount,
           pendingSalesRequestsCount,
-          totalProducts: 12,
-          lowStockCount: 3,
-          totalReviewsAnalyzed: 28450
+          totalProducts,
+          lowStockCount,
+          totalReviewsAnalyzed,
+          totalAssistanceRequests
         },
         users: usersRes.rows.map(u => ({
           userId: u.user_id,
@@ -290,6 +328,26 @@ router.put('/admin/users/:id', authenticateToken, authorizeRoles('ADMIN'), async
       });
     }
 
+    // Check target user email for root admin protection
+    const checkTarget = await query(`SELECT email, role, status FROM ${TABLE_USERS} WHERE user_id = $1`, [targetUserId]);
+    if (checkTarget.rows.length > 0) {
+      const targetUser = checkTarget.rows[0];
+      if (targetUser.email.toLowerCase() === MAIN_ADMIN_EMAIL) {
+        if (status && status.toUpperCase() !== 'ACTIVE') {
+          return res.status(403).json({
+            success: false,
+            message: 'Protection Alert: The primary system administrator account cannot be deactivated or suspended.'
+          });
+        }
+        if (role && role.toUpperCase() !== 'ADMIN') {
+          return res.status(403).json({
+            success: false,
+            message: 'Protection Alert: Primary system administrator role cannot be demoted.'
+          });
+        }
+      }
+    }
+
     let updateQuery = `UPDATE ${TABLE_USERS} SET updated_at = CURRENT_TIMESTAMP`;
     const queryParams = [];
     let paramIndex = 1;
@@ -315,10 +373,40 @@ router.put('/admin/users/:id', authenticateToken, authorizeRoles('ADMIN'), async
       return res.status(404).json({ success: false, message: 'Target user not found.' });
     }
 
+    const updatedUser = updateRes.rows[0];
+
+    // Synchronize to public.users
+    try {
+      let pubSet = [];
+      let pubParams = [];
+      let pubIdx = 1;
+
+      if (status) {
+        pubSet.push(`status = $${pubIdx}`);
+        pubParams.push(status.toUpperCase());
+        pubIdx++;
+      }
+      if (role) {
+        pubSet.push(`role = $${pubIdx}`);
+        pubParams.push(role.toUpperCase());
+        pubIdx++;
+      }
+      if (pubSet.length > 0) {
+        pubSet.push(`updated_at = CURRENT_TIMESTAMP`);
+        pubParams.push(targetUserId, updatedUser.email.toLowerCase());
+        await query(
+          `UPDATE public.users SET ${pubSet.join(', ')} WHERE user_id = $${pubIdx} OR LOWER(email) = $${pubIdx + 1}`,
+          pubParams
+        );
+      }
+    } catch (pubErr) {
+      console.warn('[Sync to public.users Warning]', pubErr.message);
+    }
+
     return res.json({
       success: true,
       message: `User account updated successfully.`,
-      user: updateRes.rows[0]
+      user: updatedUser
     });
 
   } catch (error) {
@@ -404,15 +492,21 @@ router.post('/admin/create-salesperson', authenticateToken, authorizeRoles('ADMI
 const getAdminDashboardStats = async (req, res) => {
   try {
     const usersRes = await query(
-      `SELECT user_id, full_name, email, phone, role, status, created_at FROM ${TABLE_USERS} ORDER BY created_at DESC`
+      `SELECT DISTINCT ON (LOWER(email)) user_id, full_name, email, phone, role, status, created_at 
+       FROM (
+         SELECT user_id, full_name, email, phone, role, status, created_at FROM ${TABLE_USERS}
+         UNION ALL
+         SELECT user_id, full_name, email, phone, role, status, created_at FROM public.users
+       ) all_u
+       ORDER BY LOWER(email), created_at DESC`
     );
 
     const users = usersRes.rows;
     const totalUsers = users.length;
-    const totalCustomers = users.filter(u => !u.role || u.role === 'CUSTOMER').length;
-    const totalApprovedSalesPersons = users.filter(u => (u.role === 'SALES_PERSON' || u.role === 'sales' || u.role === 'salesperson') && u.status === 'ACTIVE').length;
-    const pendingSalesRequests = users.filter(u => (u.role === 'SALES_PERSON' || u.role === 'sales' || u.role === 'salesperson') && u.status === 'PENDING').length;
-    const adminCount = users.filter(u => u.role === 'ADMIN').length;
+    const totalCustomers = users.filter(u => !u.role || u.role.toUpperCase() === 'CUSTOMER').length;
+    const totalApprovedSalesPersons = users.filter(u => ['SALES_PERSON', 'SALES', 'SALESPERSON', 'SALES_EXECUTIVE'].includes((u.role || '').toUpperCase()) && (u.status || '').toUpperCase() === 'ACTIVE').length;
+    const pendingSalesRequests = users.filter(u => ['SALES_PERSON', 'SALES', 'SALESPERSON', 'SALES_EXECUTIVE'].includes((u.role || '').toUpperCase()) && (u.status || '').toUpperCase() === 'PENDING').length;
+    const adminCount = users.filter(u => (u.role || '').toUpperCase() === 'ADMIN').length;
 
     // Dynamic catalog & order metrics directly from PostgreSQL
     let totalProducts = 0;
@@ -423,22 +517,79 @@ const getAdminDashboardStats = async (req, res) => {
     let totalRevenue = 0;
 
     try {
-      const prodRes = await query(`SELECT COUNT(*) as total, SUM(CASE WHEN stock_quantity > 0 THEN 1 ELSE 0 END) as active, SUM(CASE WHEN stock_quantity > 0 AND stock_quantity <= 5 THEN 1 ELSE 0 END) as low_stock, SUM(CASE WHEN stock_quantity = 0 THEN 1 ELSE 0 END) as out_stock FROM ${schemaName}.tbl_products`);
-      if (prodRes.rows.length > 0 && prodRes.rows[0].total > 0) {
+      const prodRes = await query(`
+        SELECT COUNT(*) as total,
+               SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) as active,
+               SUM(CASE WHEN stock_quantity > 0 AND stock_quantity <= 5 THEN 1 ELSE 0 END) as low_stock,
+               SUM(CASE WHEN stock_quantity = 0 THEN 1 ELSE 0 END) as out_stock
+        FROM public.products
+      `);
+      if (prodRes.rows.length > 0 && parseInt(prodRes.rows[0].total, 10) > 0) {
         totalProducts = parseInt(prodRes.rows[0].total, 10);
         activeProducts = parseInt(prodRes.rows[0].active || 0, 10);
         lowStockProducts = parseInt(prodRes.rows[0].low_stock || 0, 10);
         outOfStockProducts = parseInt(prodRes.rows[0].out_stock || 0, 10);
       }
-
-      const orderRes = await query(`SELECT COUNT(*) as total_orders, COALESCE(SUM(total_amount), 0) as total_rev FROM ${schemaName}.tbl_orders`);
-      if (orderRes.rows.length > 0 && parseInt(orderRes.rows[0].total_orders, 10) > 0) {
-        totalOrders = parseInt(orderRes.rows[0].total_orders, 10);
-        totalRevenue = parseFloat(orderRes.rows[0].total_rev);
-      }
-    } catch (dbErr) {
-      console.warn('[Dashboard Stats DB Warning]', dbErr.message);
+    } catch (e) {
+      try {
+        const fallbackRes = await query(`
+          SELECT COUNT(*) as total,
+                 SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) as active,
+                 SUM(CASE WHEN stock_quantity > 0 AND stock_quantity <= 5 THEN 1 ELSE 0 END) as low_stock,
+                 SUM(CASE WHEN stock_quantity = 0 THEN 1 ELSE 0 END) as out_stock
+          FROM ${schemaName}.tbl_products
+        `);
+        if (fallbackRes.rows.length > 0 && parseInt(fallbackRes.rows[0].total, 10) > 0) {
+          totalProducts = parseInt(fallbackRes.rows[0].total, 10);
+          activeProducts = parseInt(fallbackRes.rows[0].active || 0, 10);
+          lowStockProducts = parseInt(fallbackRes.rows[0].low_stock || 0, 10);
+          outOfStockProducts = parseInt(fallbackRes.rows[0].out_stock || 0, 10);
+        }
+      } catch (e2) {}
     }
+
+    // Customer Assistance Requests metrics
+    let totalAssistanceRequests = 0;
+    let pendingAssistanceRequests = 0;
+    let inProgressAssistanceRequests = 0;
+    let resolvedAssistanceRequests = 0;
+
+    try {
+      const reqRes = await query(`
+        SELECT COUNT(*) as total,
+               COUNT(*) FILTER (WHERE status = 'NEW') as new_count,
+               COUNT(*) FILTER (WHERE status = 'IN_PROGRESS') as in_progress_count,
+               COUNT(*) FILTER (WHERE status = 'RESOLVED') as resolved_count
+        FROM public.customer_assistance_requests
+      `);
+      if (reqRes.rows.length > 0) {
+        totalAssistanceRequests = parseInt(reqRes.rows[0].total || 0, 10);
+        pendingAssistanceRequests = parseInt(reqRes.rows[0].new_count || 0, 10);
+        inProgressAssistanceRequests = parseInt(reqRes.rows[0].in_progress_count || 0, 10);
+        resolvedAssistanceRequests = parseInt(reqRes.rows[0].resolved_count || 0, 10);
+      }
+    } catch (e) {}
+
+    // Genuine orders & completed revenue
+    try {
+      const orderRes = await query(`
+        SELECT COUNT(*) as total_orders,
+               COALESCE(SUM(CASE WHEN payment_status = 'PAID' OR order_status IN ('COMPLETED', 'DELIVERED') THEN total_amount ELSE 0 END), 0) as total_rev
+        FROM (
+          SELECT DISTINCT ON (order_id) order_id, total_amount, order_status, payment_status, created_at
+          FROM (
+            SELECT order_id, total_amount, order_status, payment_status, created_at FROM public.orders
+            UNION ALL
+            SELECT order_id, total_amount, order_status, payment_status, created_at FROM ${schemaName}.tbl_orders
+          ) o_all
+        ) o
+        WHERE order_status NOT IN ('CANCELLED', 'REFUNDED')
+      `);
+      if (orderRes.rows.length > 0) {
+        totalOrders = parseInt(orderRes.rows[0].total_orders || 0, 10);
+        totalRevenue = parseFloat(orderRes.rows[0].total_rev || 0);
+      }
+    } catch (e) {}
 
     return res.json({
       success: true,
@@ -452,6 +603,10 @@ const getAdminDashboardStats = async (req, res) => {
         activeProducts,
         lowStockProducts,
         outOfStockProducts,
+        totalAssistanceRequests,
+        pendingAssistanceRequests,
+        inProgressAssistanceRequests,
+        resolvedAssistanceRequests,
         totalOrders,
         totalRevenue,
         users: users.map(u => ({
@@ -476,6 +631,98 @@ const getAdminDashboardStats = async (req, res) => {
 router.get('/admin/stats', authenticateToken, authorizeRoles('ADMIN'), getAdminDashboardStats);
 router.get('/admin/dashboard/stats', authenticateToken, authorizeRoles('ADMIN'), getAdminDashboardStats);
 router.get('/stats', authenticateToken, authorizeRoles('ADMIN'), getAdminDashboardStats);
+
+/**
+ * @route   GET /api/admin/dashboard/assistance-requests OR /api/dashboard/admin/assistance-requests
+ * @desc    View and filter customer assistance requests for Admin Dashboard
+ * @access  Private (Admin only)
+ */
+const getAdminAssistanceRequests = async (req, res) => {
+  try {
+    const { status, page = 1, limit = 50 } = req.query;
+    const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
+
+    let sql = `
+      SELECT r.id, r.customer_id, r.product_id, r.request_type, r.status, r.notes, r.created_at, r.updated_at,
+             r.sales_person_id,
+             u.full_name as customer_name, u.email as customer_email, u.phone as customer_phone,
+             sp.full_name as salesperson_name, sp.email as salesperson_email, sp.phone as salesperson_phone,
+             p.product_name, p.price_inr, p.main_image_url,
+             c.category_name, b.brand_name
+      FROM public.customer_assistance_requests r
+      LEFT JOIN public.users u ON r.customer_id = u.user_id
+      LEFT JOIN public.users sp ON r.sales_person_id = sp.user_id
+      LEFT JOIN public.products p ON r.product_id = p.id
+      LEFT JOIN public.product_categories c ON p.category_id = c.id
+      LEFT JOIN public.brands b ON p.brand_id = b.id
+      WHERE 1=1
+    `;
+    const params = [];
+    let pIdx = 1;
+
+    if (status && status !== 'ALL') {
+      sql += ` AND r.status = $${pIdx}`;
+      params.push(status.toUpperCase().trim());
+      pIdx++;
+    }
+
+    sql += ` ORDER BY r.created_at DESC LIMIT $${pIdx} OFFSET $${pIdx + 1}`;
+    params.push(parseInt(limit, 10), offset);
+
+    const reqRes = await query(sql, params);
+
+    // Summary counts
+    const countRes = await query(`
+      SELECT 
+        COUNT(*) as total,
+        COUNT(*) FILTER (WHERE status = 'NEW') as new_count,
+        COUNT(*) FILTER (WHERE status = 'IN_PROGRESS') as in_progress_count,
+        COUNT(*) FILTER (WHERE status = 'RESOLVED') as resolved_count,
+        COUNT(*) FILTER (WHERE status = 'CANCELLED') as cancelled_count
+      FROM public.customer_assistance_requests
+    `);
+
+    return res.json({
+      success: true,
+      counts: {
+        total: parseInt(countRes.rows[0]?.total || 0, 10),
+        new: parseInt(countRes.rows[0]?.new_count || 0, 10),
+        inProgress: parseInt(countRes.rows[0]?.in_progress_count || 0, 10),
+        resolved: parseInt(countRes.rows[0]?.resolved_count || 0, 10),
+        cancelled: parseInt(countRes.rows[0]?.cancelled_count || 0, 10)
+      },
+      requests: reqRes.rows.map(r => ({
+        id: r.id,
+        customerId: r.customer_id,
+        customerName: r.customer_name || 'Showroom Customer',
+        customerEmail: r.customer_email || 'N/A',
+        customerPhone: r.customer_phone || 'N/A',
+        productId: r.product_id,
+        productName: r.product_name || 'General Product Inquiry',
+        productPrice: r.price_inr ? parseFloat(r.price_inr) : null,
+        productImage: r.main_image_url || null,
+        productCategory: r.category_name || 'Electronics',
+        productBrand: r.brand_name || 'OptiBuy',
+        requestType: r.request_type,
+        status: r.status,
+        notes: r.notes,
+        salesPersonId: r.sales_person_id,
+        salesPersonName: r.salesperson_name || 'Unassigned',
+        salesPersonEmail: r.salesperson_email || null,
+        salesPersonPhone: r.salesperson_phone || null,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at
+      }))
+    });
+  } catch (error) {
+    console.error('[Admin Assistance Requests Error]', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+router.get('/admin/assistance-requests', authenticateToken, authorizeRoles('ADMIN'), getAdminAssistanceRequests);
+router.get('/admin/dashboard/assistance-requests', authenticateToken, authorizeRoles('ADMIN'), getAdminAssistanceRequests);
+router.get('/assistance-requests', authenticateToken, authorizeRoles('ADMIN'), getAdminAssistanceRequests);
 
 /**
  * @route   GET /api/admin/dashboard/activity
@@ -540,7 +787,7 @@ const getAdminDashboardNotifications = async (req, res) => {
     notifications.push({
       id: 'low-stock-1',
       title: 'Low Stock Alert',
-      desc: 'Asus ROG Zephyrus G16 (2024) is low on stock (3 units left).',
+      desc: 'Catalog inventory items require restock attention.',
       time: '35 mins ago',
       read: false,
       type: 'warning'
@@ -579,27 +826,24 @@ const getAdminDashboardSalesTrend = async (req, res) => {
   try {
     const trendRes = await query(
       `SELECT TO_CHAR(created_at, 'Mon YYYY') as month, COUNT(*) as orders_count, COALESCE(SUM(total_amount), 0) as total_revenue
-       FROM ${schemaName}.tbl_orders
+       FROM (
+         SELECT DISTINCT ON (order_id) order_id, total_amount, order_status, payment_status, created_at
+         FROM (
+           SELECT order_id, total_amount, order_status, payment_status, created_at FROM public.orders
+           UNION ALL
+           SELECT order_id, total_amount, order_status, payment_status, created_at FROM ${schemaName}.tbl_orders
+         ) o_all
+       ) o
+       WHERE payment_status = 'PAID' OR order_status IN ('COMPLETED', 'DELIVERED', 'SHIPPED')
        GROUP BY TO_CHAR(created_at, 'Mon YYYY'), DATE_TRUNC('month', created_at)
        ORDER BY DATE_TRUNC('month', created_at) ASC`
     );
 
-    let trends = trendRes.rows.map(r => ({
+    const trends = trendRes.rows.map(r => ({
       month: r.month,
       orders: parseInt(r.orders_count, 10),
       revenue: parseFloat(r.total_revenue)
     }));
-
-    if (trends.length === 0) {
-      trends = [
-        { month: 'Jan', orders: 12, revenue: 18400 },
-        { month: 'Feb', orders: 19, revenue: 27900 },
-        { month: 'Mar', orders: 15, revenue: 22100 },
-        { month: 'Apr', orders: 24, revenue: 35800 },
-        { month: 'May', orders: 31, revenue: 46200 },
-        { month: 'Jun', orders: 28, revenue: 41500 }
-      ];
-    }
 
     return res.json({
       success: true,

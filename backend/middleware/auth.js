@@ -8,7 +8,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'optibuy_secure_jwt_secret_key_2026
 export const normalizeRole = (role) => {
   if (!role) return 'CUSTOMER';
   const r = role.toUpperCase().trim();
-  if (r === 'SALES' || r === 'SALESPERSON' || r === 'SALES_PERSON') return 'SALES_PERSON';
+  if (r === 'SALES' || r === 'SALESPERSON' || r === 'SALES_PERSON' || r === 'SALES_EXECUTIVE' || r === 'SALES EXECUTIVE') return 'SALES_PERSON';
   if (r === 'ADMIN' || r === 'ADMINISTRATOR') return 'ADMIN';
   return 'CUSTOMER';
 };
