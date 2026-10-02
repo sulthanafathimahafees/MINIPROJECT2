@@ -14,14 +14,18 @@ import {
   Package, 
   BarChart3, 
   X,
-  Lock
+  Lock,
+  LifeBuoy,
+  Zap
 } from 'lucide-react';
 import Logo from './Logo';
 import { logoutUser } from '../../services/authService';
 
 const DashboardSidebar = ({ role, isOpen, onClose }) => {
   const navigate = useNavigate();
-  const normalizedRole = (role || 'customer').toLowerCase();
+  const rawRole = (role || 'customer').toLowerCase();
+  const isSales = rawRole === 'salesperson' || rawRole === 'sales_person' || rawRole === 'sales' || rawRole === 'sales_executive' || rawRole === 'sales executive';
+  const roleType = rawRole === 'admin' ? 'admin' : isSales ? 'salesperson' : 'customer';
 
   const handleLogout = () => {
     logoutUser();
@@ -30,13 +34,16 @@ const DashboardSidebar = ({ role, isOpen, onClose }) => {
 
   // Customer Menu Items
   const customerItems = [
-    { label: 'Dashboard', path: '/customer-dashboard', icon: LayoutDashboard },
-    { label: 'Products', path: '/products', icon: ShoppingBag },
-    { label: 'Recommendations', path: '/customer-dashboard#recommendations', icon: Sparkles },
-    { label: 'Compare', path: '/products', icon: SlidersHorizontal },
-    { label: 'Review Intelligence', path: '/customer-dashboard#ai-reviews', icon: ShieldCheck },
-    { label: 'Saved Products', path: '/customer-dashboard#saved-products', icon: Heart },
-    { label: 'Profile', path: '/customer-dashboard', icon: User },
+    { label: 'Dashboard Overview', path: '/customer-dashboard', icon: LayoutDashboard },
+    { label: 'Browse Products', path: '/products', icon: ShoppingBag },
+    { label: 'Product Match Score', path: '/customer-dashboard#match-scores', icon: Zap },
+    { label: 'Saved Wishlist', path: '/customer-dashboard#saved-wishlist', icon: Heart },
+    { label: 'Compare Devices', path: '/customer-dashboard#comparison-matrix', icon: SlidersHorizontal },
+    { label: 'Floor Assistance', path: '/customer-dashboard#assistance-requests', icon: LifeBuoy },
+    { label: 'My Orders', path: '/customer-dashboard#order-history', icon: Package },
+    { label: 'Recommendations', path: '/customer-dashboard#sales-recommendations', icon: Sparkles },
+    { label: 'My Reviews', path: '/customer-dashboard#my-reviews', icon: ShieldCheck },
+    { label: 'Profile & Preferences', path: '/customer-dashboard#profile', icon: User },
   ];
 
   // Sales Person Menu Items
@@ -62,9 +69,9 @@ const DashboardSidebar = ({ role, isOpen, onClose }) => {
     { label: 'System Settings', path: '/admin-dashboard#system', icon: Lock },
   ];
 
-  const menuItems = normalizedRole === 'admin' 
+  const menuItems = roleType === 'admin' 
     ? adminItems 
-    : (normalizedRole === 'salesperson' || normalizedRole === 'sales') 
+    : roleType === 'salesperson' 
     ? salesItems 
     : customerItems;
 
@@ -92,7 +99,7 @@ const DashboardSidebar = ({ role, isOpen, onClose }) => {
           <div className="px-3 py-2 rounded-xl bg-slate-800/80 border border-slate-700/60 flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-pulse" />
             <span className="text-xs font-mono font-bold uppercase text-cyan-300">
-              {normalizedRole.toUpperCase()} CONSOLE
+              {roleType === 'admin' ? 'ADMIN' : roleType === 'salesperson' ? 'SALES EXECUTIVE' : 'CUSTOMER'} CONSOLE
             </span>
           </div>
 

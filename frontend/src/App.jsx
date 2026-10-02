@@ -25,7 +25,7 @@ const DashboardRedirect = () => {
   if (!user) return <Navigate to="/login" replace />;
   const role = (user.role || 'customer').toUpperCase();
   if (role === 'ADMIN') return <Navigate to="/admin-dashboard" replace />;
-  if (role === 'SALES_PERSON' || role === 'SALES') return <Navigate to="/sales-dashboard" replace />;
+  if (role === 'SALES_PERSON' || role === 'SALES' || role === 'SALES_EXECUTIVE' || role === 'SALESPERSON') return <Navigate to="/sales-dashboard" replace />;
   return <Navigate to="/customer-dashboard" replace />;
 };
 
@@ -60,7 +60,7 @@ function App() {
             <Route
               path="sales-dashboard"
               element={
-                <ProtectedRoute allowedRoles={['SALES_PERSON', 'SALES']}>
+                <ProtectedRoute allowedRoles={['SALES_PERSON', 'SALES_EXECUTIVE', 'SALES', 'SALESPERSON']}>
                   <SalesDashboard />
                 </ProtectedRoute>
               }

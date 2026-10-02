@@ -10,7 +10,7 @@ const LoginPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const queryParams = new URLSearchParams(location.search);
-  const redirectParam = queryParams.get('redirect');
+  const redirectParam = queryParams.get('redirect') || location.state?.from?.pathname;
   const [showPassword, setShowPassword] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -64,6 +64,21 @@ const LoginPage = () => {
     return Object.keys(errors).length === 0;
   };
 
+  const determineTargetDashboard = (rawRole) => {
+    const role = (rawRole || 'customer').toLowerCase();
+    const isSales = role === 'salesperson' || role === 'sales_person' || role === 'sales' || role === 'sales_executive' || role === 'sales executive';
+    const defaultDashboard = role === 'admin' ? '/admin-dashboard' : isSales ? '/sales-dashboard' : '/customer-dashboard';
+
+    if (!redirectParam) return defaultDashboard;
+
+    // Verify user role is allowed on requested redirectParam
+    if (redirectParam.startsWith('/admin-dashboard') && role !== 'admin') return defaultDashboard;
+    if (redirectParam.startsWith('/sales-dashboard') && !isSales && role !== 'admin') return defaultDashboard;
+    if (redirectParam.startsWith('/customer-dashboard') && role !== 'customer') return defaultDashboard;
+
+    return redirectParam;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -75,13 +90,12 @@ const LoginPage = () => {
 
     try {
       const response = await loginUser({ email: email.trim(), password });
-      const userRole = (response.user.role || 'customer').toLowerCase();
-      const defaultDashboard = userRole === 'admin' ? '/admin-dashboard' : (userRole === 'salesperson' || userRole === 'sales_person' || userRole === 'sales') ? '/sales-dashboard' : '/customer-dashboard';
-      const targetDashboard = redirectParam || defaultDashboard;
-      setSuccess(`Welcome back, ${response.user.fullName || 'User'}! Redirecting...`);
+      const targetDashboard = determineTargetDashboard(response.user.role);
+      const displayName = response.user.fullName || response.user.full_name || 'User';
+      setSuccess(`Welcome back, ${displayName}! Redirecting...`);
       setTimeout(() => {
         navigate(targetDashboard);
-      }, 1000);
+      }, 700);
     } catch (err) {
       setError(err.message || 'Failed to connect to authentication server. Ensure backend server is running.');
     } finally {
@@ -97,12 +111,12 @@ const LoginPage = () => {
     initiateGoogleSignIn(
       (data) => {
         setLoading(false);
-        const userRole = (data.user.role || 'customer').toLowerCase();
-        const targetDashboard = userRole === 'admin' ? '/admin-dashboard' : (userRole === 'salesperson' || userRole === 'sales_person' || userRole === 'sales') ? '/sales-dashboard' : '/customer-dashboard';
-        setSuccess(`Signed in with Google as ${data.user.fullName || data.user.email}! Redirecting to ${userRole.toUpperCase()} Dashboard...`);
+        const targetDashboard = determineTargetDashboard(data.user.role);
+        const displayName = data.user.fullName || data.user.full_name || data.user.email;
+        setSuccess(`Signed in with Google as ${displayName}! Redirecting...`);
         setTimeout(() => {
           navigate(targetDashboard);
-        }, 1000);
+        }, 700);
       },
       (err) => {
         setLoading(false);
@@ -112,17 +126,17 @@ const LoginPage = () => {
   };
 
   return (
-    <div className="min-h-[calc(100vh-80px)] flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 relative bg-slate-50 dark:bg-[#0B1120] transition-colors duration-300 overflow-hidden">
+    <div className="min-h-screen flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8 relative bg-slate-50 dark:bg-[#0B1120] transition-colors duration-300">
       
       {/* Background Ambient Glows */}
       <div className="absolute top-10 left-10 w-96 h-96 bg-[#2563EB]/10 dark:bg-[#2563EB]/20 rounded-full blur-3xl" />
       <div className="absolute bottom-10 right-10 w-96 h-96 bg-[#06B6D4]/10 dark:bg-[#06B6D4]/20 rounded-full blur-3xl" />
 
-      <div className="max-w-6xl w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-center relative z-10">
+      <div className="max-w-6xl w-full grid grid-cols-1 md:grid-cols-12 gap-8 items-center relative z-10 overflow-hidden">
         
         {/* Left Side: Brand Highlights */}
-        <div className="lg:col-span-6 hidden lg:flex flex-col justify-between p-9 bg-gradient-to-br from-slate-900 via-slate-800 to-[#2563EB]/40 rounded-3xl text-white min-h-[560px] shadow-2xl border border-slate-700 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-80 h-80 bg-[#06B6D4]/20 rounded-full blur-3xl pointer-events-none" />
+        <div className="md:col-span-6 hidden md:flex flex-col justify-between p-9 bg-gradient-to-br from-slate-900 via-slate-800 to-[#2563EB]/40 rounded-3xl text-white min-h-[480px] shadow-2xl border border-slate-700 relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-72 h-72 bg-[#06B6D4]/20 rounded-full blur-3xl pointer-events-none" />
 
           {/* Top Brand Header */}
           <div>
@@ -158,12 +172,12 @@ const LoginPage = () => {
         </div>
 
         {/* Right Side: Glassmorphism Login Card */}
-        <div className="lg:col-span-6">
+        <div className="md:col-span-6 w-full">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4 }}
-            className="glass-card rounded-3xl p-8 sm:p-10 border border-slate-200/90 dark:border-slate-800 shadow-2xl backdrop-blur-xl"
+            className="glass-card rounded-3xl p-8 sm:p-10 border border-slate-200/90 dark:border-slate-800 shadow-2xl backdrop-blur-xl max-w-md mx-auto max-h-[calc(100vh-3rem)] overflow-y-auto"
           >
             <div className="text-center sm:text-left mb-7">
               <h2 className="text-3xl font-extrabold text-slate-900 dark:text-white">
@@ -203,6 +217,7 @@ const LoginPage = () => {
                     <Mail className="w-5 h-5" />
                   </div>
                   <input
+                    id="email-input"
                     type="email"
                     value={email}
                     onChange={(e) => {
@@ -238,6 +253,7 @@ const LoginPage = () => {
                     <Lock className="w-5 h-5" />
                   </div>
                   <input
+                    id="password-input"
                     type={showPassword ? 'text' : 'password'}
                     value={password}
                     onChange={(e) => {
@@ -272,6 +288,7 @@ const LoginPage = () => {
               <div className="flex items-center justify-between">
                 <label className="flex items-center gap-2.5 cursor-pointer">
                   <input
+                    id="remember-me"
                     type="checkbox"
                     checked={rememberMe}
                     onChange={(e) => setRememberMe(e.target.checked)}
@@ -286,6 +303,7 @@ const LoginPage = () => {
 
               {/* Login Button */}
               <button
+                id="login-submit-btn"
                 type="submit"
                 disabled={loading}
                 className="w-full py-4 rounded-2xl text-base font-bold text-white bg-gradient-to-r from-[#2563EB] to-[#1D4ED8] hover:from-[#1D4ED8] hover:to-[#1E40AF] shadow-lg shadow-[#2563EB]/25 hover:shadow-xl transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"

@@ -40,7 +40,9 @@ const Navbar = () => {
     navigate('/login');
   };
 
-  const userRole = (user?.role || 'customer').toLowerCase();
+  const rawRole = (user?.role || 'customer').toLowerCase();
+  const isSales = rawRole === 'salesperson' || rawRole === 'sales_person' || rawRole === 'sales' || rawRole === 'sales_executive' || rawRole === 'sales executive';
+  const roleType = rawRole === 'admin' ? 'admin' : isSales ? 'sales' : 'customer';
 
   // Dynamic role-dependent navigation items
   const navItems = [
@@ -48,8 +50,8 @@ const Navbar = () => {
     { label: 'Products', path: '/products' },
     ...(user ? [
       { 
-        label: userRole === 'admin' ? 'Admin Dashboard' : (userRole === 'salesperson' || userRole === 'sales') ? 'Sales Dashboard' : 'Dashboard', 
-        path: userRole === 'admin' ? '/admin-dashboard' : (userRole === 'salesperson' || userRole === 'sales') ? '/sales-dashboard' : '/customer-dashboard' 
+        label: roleType === 'admin' ? 'Admin Dashboard' : roleType === 'sales' ? 'Sales Dashboard' : 'Customer Dashboard', 
+        path: roleType === 'admin' ? '/admin-dashboard' : roleType === 'sales' ? '/sales-dashboard' : '/customer-dashboard' 
       }
     ] : []),
     { label: 'About', path: '/about' },
@@ -111,13 +113,13 @@ const Navbar = () => {
             {user ? (
               <div className="flex items-center gap-2.5 shrink-0">
                 <Link
-                  to={userRole === 'admin' ? '/admin-dashboard' : (userRole === 'salesperson' || userRole === 'sales') ? '/sales-dashboard' : '/customer-dashboard'}
+                  to={roleType === 'admin' ? '/admin-dashboard' : roleType === 'sales' ? '/sales-dashboard' : '/customer-dashboard'}
                   className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-emerald-50 dark:bg-emerald-950/70 border border-emerald-200 dark:border-emerald-800 text-emerald-900 dark:text-emerald-300 text-sm font-bold shadow-xs hover:border-emerald-400 transition-all"
                 >
                   <UserCheck className="w-4.5 h-4.5 text-emerald-600 dark:text-emerald-400" />
                   <span>{user.fullName || user.email}</span>
                   <span className="ml-1 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded-md font-extrabold bg-emerald-200 dark:bg-emerald-800 text-emerald-900 dark:text-emerald-100">
-                    {userRole}
+                    {roleType === 'admin' ? 'ADMIN' : roleType === 'sales' ? 'SALES EXECUTIVE' : 'CUSTOMER'}
                   </span>
                 </Link>
 

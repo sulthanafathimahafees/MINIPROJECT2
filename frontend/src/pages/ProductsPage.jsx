@@ -21,7 +21,11 @@ import {
   ChevronRight,
   TrendingUp,
   Cpu,
-  Lock
+  Lock,
+  Heart,
+  LifeBuoy,
+  Loader2,
+  Send
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link, useNavigate } from 'react-router-dom';
@@ -296,10 +300,13 @@ const ProductsPage = () => {
   const navigate = useNavigate();
   const currentUser = getStoredUser();
 
+  const [productsList, setProductsList] = useState(electronicsProducts);
+  const [loadingProducts, setLoadingProducts] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState('All Electronics');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBrand, setSelectedBrand] = useState('All');
   const [sortBy, setSortBy] = useState('decisionScore');
+  const [feedbackToast, setFeedbackToast] = useState('');
   
   // Side-by-side comparison tray state
   const [compareList, setCompareList] = useState([]);
@@ -308,13 +315,181 @@ const ProductsPage = () => {
   // Detail Modal State
   const [activeModalProduct, setActiveModalProduct] = useState(null);
 
+  // Assistance Request Modal State
+  const [showAssistanceModal, setShowAssistanceModal] = useState(false);
+  const [assistanceProduct, setAssistanceProduct] = useState(null);
+  const [assistanceNotes, setAssistanceNotes] = useState('');
+  const [assistanceRequestType, setAssistanceRequestType] = useState('PRODUCT_INQUIRY');
+  const [assistanceSubmitting, setAssistanceSubmitting] = useState(false);
+
+  // User Wishlist IDs Set
+  const [userWishlistIds, setUserWishlistIds] = useState(new Set());
+
   // Auth Required Guard Modal State
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [targetProductForAuth, setTargetProductForAuth] = useState(null);
 
+  // Fetch live products and user wishlist on mount
+  React.useEffect(() => {
+    fetchLiveProducts();
+    if (currentUser) {
+      fetchUserWishlist();
+    }
+  }, []);
+
+  const showToast = (msg) => {
+    setFeedbackToast(msg);
+    setTimeout(() => setFeedbackToast(''), 3500);
+  };
+
+  const fetchLiveProducts = async () => {
+    try {
+      setLoadingProducts(true);
+      const res = await fetch('/api/products');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.products) && data.products.length > 0) {
+          const mapped = data.products.map(p => ({
+            id: p.id || p.product_id,
+            name: p.product_name || p.name,
+            brand: p.brand_name || p.brand,
+            category: p.category_name || p.category,
+            price: parseFloat(p.price_inr || p.price),
+            originalPrice: p.original_price_inr ? parseFloat(p.original_price_inr) : (p.original_price ? parseFloat(p.original_price) : null),
+            rating: parseFloat(p.rating || 4.5),
+            reviewCount: parseInt(p.review_count || 0, 10),
+            decisionScore: parseInt(p.decision_score || 95, 10),
+            image: p.main_image_url || p.image_url || 'https://images.unsplash.com/photo-1695048133142-1a20484d2569?w=600&auto=format&fit=crop&q=80',
+            badge: p.badge || 'Showroom Available',
+            stockQuantity: p.stock_quantity !== undefined ? p.stock_quantity : 15,
+            stockStatus: p.stock_status || 'IN_STOCK',
+            specs: typeof p.specs === 'object' && p.specs !== null ? p.specs : {},
+            pros: Array.isArray(p.pros) ? p.pros : ['High Performance', 'Premium Build'],
+            cons: Array.isArray(p.cons) ? p.cons : ['High Demand Model']
+          }));
+          setProductsList(mapped);
+        }
+      }
+    } catch (e) {
+      console.warn('[ProductsPage] Falling back to initial catalog data.');
+    } finally {
+      setLoadingProducts(false);
+    }
+  };
+
+  const fetchUserWishlist = async () => {
+    const token = localStorage.getItem('optibuy_token');
+    if (!token) return;
+    try {
+      const res = await fetch('/api/customer/wishlist', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && Array.isArray(data.wishlist)) {
+          setUserWishlistIds(new Set(data.wishlist.map(w => w.productId || w.id)));
+        }
+      }
+    } catch (e) {
+      console.warn('[ProductsPage] Could not load user wishlist.');
+    }
+  };
+
+  const handleToggleWishlist = async (product) => {
+    if (!currentUser) {
+      setTargetProductForAuth(product);
+      setShowAuthModal(true);
+      return;
+    }
+
+    const token = localStorage.getItem('optibuy_token');
+    const isWishlisted = userWishlistIds.has(product.id);
+
+    try {
+      if (isWishlisted) {
+        const res = await fetch(`/api/customer/wishlist/${product.id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          setUserWishlistIds(prev => {
+            const next = new Set(prev);
+            next.delete(product.id);
+            return next;
+          });
+          showToast(`Removed "${product.name}" from wishlist.`);
+        }
+      } else {
+        const res = await fetch('/api/customer/wishlist', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify({ productId: product.id })
+        });
+        if (res.ok) {
+          setUserWishlistIds(prev => new Set(prev).add(product.id));
+          showToast(`Saved "${product.name}" to wishlist in PostgreSQL!`);
+        }
+      }
+    } catch (err) {
+      showToast('Could not update wishlist.');
+    }
+  };
+
+  const handleOpenAssistance = (product) => {
+    if (!currentUser) {
+      setTargetProductForAuth(product);
+      setShowAuthModal(true);
+      return;
+    }
+    setAssistanceProduct(product);
+    setAssistanceNotes(`I would like showroom assistance regarding ${product.name} (Price: ${formatCurrencyINR(product.price)}). `);
+    setShowAssistanceModal(true);
+  };
+
+  const handleSubmitAssistance = async (e) => {
+    e.preventDefault();
+    if (!assistanceNotes.trim() || !assistanceProduct) return;
+
+    setAssistanceSubmitting(true);
+    const token = localStorage.getItem('optibuy_token');
+
+    try {
+      const res = await fetch('/api/customer/assistance', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          productId: assistanceProduct.id,
+          requestType: assistanceRequestType,
+          notes: assistanceNotes.trim()
+        })
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        showToast('Assistance request submitted! A showroom sales executive will be assigned.');
+        setShowAssistanceModal(false);
+        setAssistanceProduct(null);
+        setAssistanceNotes('');
+        setAssistanceRequestType('PRODUCT_INQUIRY');
+      } else {
+        alert(data.message || 'Failed to submit assistance request.');
+      }
+    } catch (err) {
+      alert('Error submitting assistance request.');
+    } finally {
+      setAssistanceSubmitting(false);
+    }
+  };
+
   // Filter & Sort Logic
   const filteredProducts = useMemo(() => {
-    return electronicsProducts
+    return productsList
       .filter((p) => {
         const matchesCategory = selectedCategory === 'All Electronics' || p.category === selectedCategory || (selectedCategory === 'Audio' && p.category === 'Headphones') || (selectedCategory === 'Smartwatches' && p.category === 'Smartwatches');
         const matchesBrand = selectedBrand === 'All' || p.brand === selectedBrand;
@@ -330,7 +505,7 @@ const ProductsPage = () => {
         if (sortBy === 'rating') return b.rating - a.rating;
         return 0;
       });
-  }, [selectedCategory, selectedBrand, searchQuery, sortBy]);
+  }, [productsList, selectedCategory, selectedBrand, searchQuery, sortBy]);
 
   // Auth Protection for Detailed Views
   const handleViewDetails = (product) => {
@@ -394,6 +569,7 @@ const ProductsPage = () => {
             return (
               <button
                 key={cat.name}
+                id={`category-${cat.name.toLowerCase().replace(/\s+/g, '-')}`}
                 onClick={() => setSelectedCategory(cat.name)}
                 className={`inline-flex items-center gap-2.5 px-5 py-3 rounded-2xl text-sm font-bold whitespace-nowrap transition-all duration-200 shadow-xs ${
                   isSelected
@@ -515,10 +691,28 @@ const ProductsPage = () => {
                     </span>
                   </div>
 
-                  {/* Rating Pill */}
-                  <div className="absolute top-4 right-4 flex items-center gap-1 px-3 py-1.5 rounded-2xl bg-slate-900/90 text-white backdrop-blur-md border border-amber-400/40 shadow-lg">
-                    <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
-                    <span className="text-xs font-extrabold">{product.rating}</span>
+                  {/* Rating & Wishlist Heart Button */}
+                  <div className="absolute top-4 right-4 flex items-center gap-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleToggleWishlist(product);
+                      }}
+                      title={userWishlistIds.has(product.id) ? 'Remove from Wishlist' : 'Save to Wishlist'}
+                      aria-label="Toggle Wishlist"
+                      className={`p-2 rounded-full backdrop-blur-md transition-all shadow-md cursor-pointer ${
+                        userWishlistIds.has(product.id)
+                          ? 'bg-rose-500 text-white'
+                          : 'bg-slate-900/80 text-slate-300 hover:text-rose-400 hover:bg-slate-900'
+                      }`}
+                    >
+                      <Heart className={`w-4 h-4 ${userWishlistIds.has(product.id) ? 'fill-current' : ''}`} />
+                    </button>
+
+                    <div className="flex items-center gap-1 px-3 py-1.5 rounded-2xl bg-slate-900/90 text-white backdrop-blur-md border border-amber-400/40 shadow-lg">
+                      <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                      <span className="text-xs font-extrabold">{product.rating}</span>
+                    </div>
                   </div>
                 </div>
 
@@ -722,16 +916,28 @@ const ProductsPage = () => {
                 </div>
               </div>
 
-              <div className="mt-6 pt-6 border-t border-slate-200 dark:border-slate-800 flex justify-end gap-3">
+              <div className="mt-6 pt-6 border-t border-slate-200 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3">
                 <button
-                  onClick={() => {
-                    alert(`Added ${activeModalProduct.name} to wishlist!`);
-                    setActiveModalProduct(null);
-                  }}
-                  className="px-6 py-3 rounded-2xl text-sm font-bold text-white bg-[#2563EB] hover:bg-[#1D4ED8] shadow-lg"
+                  onClick={() => handleOpenAssistance(activeModalProduct)}
+                  className="px-5 py-3 rounded-2xl text-xs font-bold text-orange-600 dark:text-orange-400 bg-orange-50 dark:bg-orange-950/40 hover:bg-orange-100 dark:hover:bg-orange-900/40 border border-orange-300 dark:border-orange-800 flex items-center gap-2 cursor-pointer transition-all"
                 >
-                  Save to Wishlist
+                  <LifeBuoy className="w-4 h-4" />
+                  <span>Request Showroom Assistance</span>
                 </button>
+
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={() => handleToggleWishlist(activeModalProduct)}
+                    className={`px-6 py-3 rounded-2xl text-sm font-bold shadow-lg transition-all flex items-center gap-2 cursor-pointer ${
+                      userWishlistIds.has(activeModalProduct.id)
+                        ? 'bg-rose-500 text-white hover:bg-rose-600'
+                        : 'bg-[#2563EB] text-white hover:bg-[#1D4ED8]'
+                    }`}
+                  >
+                    <Heart className={`w-4 h-4 ${userWishlistIds.has(activeModalProduct.id) ? 'fill-current' : ''}`} />
+                    <span>{userWishlistIds.has(activeModalProduct.id) ? 'Saved in Wishlist' : 'Save to Wishlist'}</span>
+                  </button>
+                </div>
               </div>
             </motion.div>
           </div>
@@ -784,6 +990,136 @@ const ProductsPage = () => {
               </div>
             </motion.div>
           </div>
+        )}
+      </AnimatePresence>
+
+      {/* Showroom Assistance Request Modal */}
+      <AnimatePresence>
+        {showAssistanceModal && assistanceProduct && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md overflow-y-auto">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl relative my-8 space-y-6"
+            >
+              <div className="flex items-center justify-between pb-4 border-b border-slate-200 dark:border-slate-800">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-2xl bg-orange-100 dark:bg-orange-950/60 flex items-center justify-center text-orange-600 dark:text-orange-400">
+                    <LifeBuoy className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-slate-900 dark:text-white">
+                      Request Showroom Assistance
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      Connect with an on-floor sales specialist
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowAssistanceModal(false)}
+                  className="p-2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Product Info Summary */}
+              <div className="flex items-center gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+                <img
+                  src={assistanceProduct.image}
+                  alt={assistanceProduct.name}
+                  className="w-16 h-16 object-cover rounded-xl"
+                />
+                <div className="space-y-1">
+                  <h4 className="font-bold text-sm text-slate-900 dark:text-white">
+                    {assistanceProduct.name}
+                  </h4>
+                  <p className="text-xs font-extrabold text-orange-600 dark:text-orange-400">
+                    {formatCurrencyINR(assistanceProduct.price)}
+                  </p>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
+                    {assistanceProduct.category}
+                  </span>
+                </div>
+              </div>
+
+              <form onSubmit={handleSubmitAssistance} className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                    Assistance Type
+                  </label>
+                  <select
+                    value={assistanceRequestType}
+                    onChange={(e) => setAssistanceRequestType(e.target.value)}
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  >
+                    <option value="PRODUCT_INQUIRY">Product Inquiry / Specifications</option>
+                    <option value="LIVE_DEMO">Live Hands-on Demo Request</option>
+                    <option value="PRICE_NEGOTIATION">Showroom Price & Discounts</option>
+                    <option value="EMI_FINANCE">EMI & Financing Consultation</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 mb-1.5">
+                    Your Requirements / Questions
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={assistanceNotes}
+                    onChange={(e) => setAssistanceNotes(e.target.value)}
+                    placeholder="Enter what you'd like the sales executive to help you with..."
+                    required
+                    className="w-full px-4 py-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white text-xs focus:outline-none focus:ring-2 focus:ring-orange-500 resize-none"
+                  />
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAssistanceModal(false)}
+                    className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={assistanceSubmitting}
+                    className="px-6 py-2.5 rounded-xl text-xs font-bold text-white bg-orange-600 hover:bg-orange-700 flex items-center gap-2 cursor-pointer shadow-lg disabled:opacity-50"
+                  >
+                    {assistanceSubmitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Submitting...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Send className="w-4 h-4" />
+                        <span>Send Request</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Floating Feedback Toast */}
+      <AnimatePresence>
+        {feedbackToast && (
+          <motion.div
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className="fixed bottom-6 right-6 z-50 flex items-center gap-3 px-5 py-3.5 rounded-2xl bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-2xl border border-slate-700 dark:border-slate-200 text-xs font-bold"
+          >
+            <CheckCircle2 className="w-5 h-5 text-emerald-400 dark:text-emerald-600 flex-shrink-0" />
+            <span>{feedbackToast}</span>
+          </motion.div>
         )}
       </AnimatePresence>
 

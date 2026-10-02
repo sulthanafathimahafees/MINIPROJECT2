@@ -19,16 +19,26 @@ import {
   TrendingUp,
   Trash2,
   AlertCircle,
-  Cpu
+  Cpu,
+  Package,
+  MessageSquare,
+  LifeBuoy,
+  Box,
+  Send,
+  Eye,
+  RotateCcw,
+  Menu
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Link, useNavigate } from 'react-router-dom';
 import { getStoredUser } from '../../services/authService';
 import { formatCurrencyINR } from '../../utils/currencyFormatter';
+import DashboardSidebar from '../../components/common/DashboardSidebar';
 
 const CustomerDashboard = () => {
   const navigate = useNavigate();
   const [user, setUser] = useState(getStoredUser());
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [feedbackMsg, setFeedbackMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -45,6 +55,25 @@ const CustomerDashboard = () => {
   const [wishlist, setWishlist] = useState([]);
   const [comparisons, setComparisons] = useState([]);
   const [recommendations, setRecommendations] = useState([]);
+  
+  // New states for Sprint 1 features
+  const [orders, setOrders] = useState([]);
+  const [selectedOrder, setSelectedOrder] = useState(null);
+  const [assistanceRequests, setAssistanceRequests] = useState([]);
+  const [salesRecommendations, setSalesRecommendations] = useState([]);
+  const [myReviews, setMyReviews] = useState([]);
+  
+  // Loading states
+  const [ordersLoading, setOrdersLoading] = useState(false);
+  const [assistanceLoading, setAssistanceLoading] = useState(false);
+  const [salesRecLoading, setSalesRecLoading] = useState(false);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  
+  // Match Score states
+  const [matchScores, setMatchScores] = useState([]);
+  const [matchScoreLoading, setMatchScoreLoading] = useState(false);
+  const [showMatchScoreModal, setShowMatchScoreModal] = useState(false);
+  const [selectedMatchProduct, setSelectedMatchProduct] = useState(null);
 
   // Preference modal state
   const [showPrefModal, setShowPrefModal] = useState(false);
@@ -71,6 +100,18 @@ const CustomerDashboard = () => {
   const [emiMonths, setEmiMonths] = useState(12);
   const [emiInterest, setEmiInterest] = useState(10);
 
+  // Assistance Request Modal state
+  const [showAssistanceModal, setShowAssistanceModal] = useState(false);
+  const [assistanceForm, setAssistanceForm] = useState({
+    productId: '',
+    requestType: 'PRODUCT_INQUIRY',
+    notes: ''
+  });
+  const [selectedProductForAssistance, setSelectedProductForAssistance] = useState(null);
+
+  // Order Detail Modal state
+  const [showOrderDetailModal, setShowOrderDetailModal] = useState(false);
+
   const calculateMonthlyEmi = () => {
     const r = emiInterest / 12 / 100;
     const n = emiMonths;
@@ -78,10 +119,38 @@ const CustomerDashboard = () => {
     return isNaN(emi) ? 0 : Math.round(emi);
   };
 
-  // Fetch PostgreSQL Customer Data on Mount
+  // Fetch PostgreSQL Customer Data on Mount & Set Polling for Real-Time Showroom Updates
   useEffect(() => {
     fetchCustomerData();
+
+    // Poll assistance requests and sales recommendations every 20 seconds
+    const pollInterval = setInterval(() => {
+      refreshAssistanceAndRecommendations();
+    }, 20000);
+
+    return () => clearInterval(pollInterval);
   }, []);
+
+  const refreshAssistanceAndRecommendations = async () => {
+    const token = localStorage.getItem('optibuy_token');
+    if (!token) return;
+    try {
+      const [assistRes, salesRecRes] = await Promise.all([
+        fetch('/api/customer/assistance', { headers: { Authorization: `Bearer ${token}` } }),
+        fetch('/api/customer/recommendations', { headers: { Authorization: `Bearer ${token}` } })
+      ]);
+      const assistData = await assistRes.json();
+      if (assistData.success) {
+        setAssistanceRequests(assistData.requests || []);
+      }
+      const salesRecData = await salesRecRes.json();
+      if (salesRecData.success) {
+        setSalesRecommendations(salesRecData.recommendations || []);
+      }
+    } catch (err) {
+      // Silent error during background poll
+    }
+  };
 
   const fetchCustomerData = async () => {
     const token = localStorage.getItem('optibuy_token');
@@ -152,6 +221,61 @@ const CustomerDashboard = () => {
         const topMatches = prodData.products.slice(0, 4);
         setRecommendations(topMatches);
       }
+
+      // 6. Order History
+      setOrdersLoading(true);
+      const ordersRes = await fetch('/api/customer/orders', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const ordersData = await ordersRes.json();
+      if (ordersData.success) {
+        setOrders(ordersData.orders || []);
+      }
+      setOrdersLoading(false);
+
+      // 7. Assistance Requests
+      setAssistanceLoading(true);
+      const assistRes = await fetch('/api/customer/assistance', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const assistData = await assistRes.json();
+      if (assistData.success) {
+        setAssistanceRequests(assistData.requests || []);
+      }
+      setAssistanceLoading(false);
+
+      // 8. Sales Executive Recommendations
+      setSalesRecLoading(true);
+      const salesRecRes = await fetch('/api/customer/recommendations', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const salesRecData = await salesRecRes.json();
+      if (salesRecData.success) {
+        setSalesRecommendations(salesRecData.recommendations || []);
+      }
+      setSalesRecLoading(false);
+
+      // 9. Customer's Own Reviews
+      setReviewsLoading(true);
+      const reviewsRes = await fetch('/api/customer/reviews', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const reviewsData = await reviewsRes.json();
+      if (reviewsData.success) {
+        setMyReviews(reviewsData.reviews || []);
+      }
+      setReviewsLoading(false);
+
+      // 10. Product Match Scores
+      setMatchScoreLoading(true);
+      const matchRes = await fetch('/api/customer/match-score', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const matchData = await matchRes.json();
+      if (matchData.success) {
+        setMatchScores(matchData.products || []);
+      }
+      setMatchScoreLoading(false);
 
     } catch (err) {
       console.error('[Customer Dashboard Fetch Error]', err);
@@ -266,9 +390,99 @@ const CustomerDashboard = () => {
     }
   };
 
+  // Fetch Order Details
+  const handleViewOrderDetails = async (orderId) => {
+    const token = localStorage.getItem('optibuy_token');
+    try {
+      const res = await fetch(`/api/customer/orders/${orderId}`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSelectedOrder(data.order);
+        setShowOrderDetailModal(true);
+      } else {
+        alert('Failed to load order details.');
+      }
+    } catch (err) {
+      alert('Failed to load order details.');
+    }
+  };
+
+  // Create Assistance Request
+  const handleCreateAssistance = async (e) => {
+    e.preventDefault();
+    const token = localStorage.getItem('optibuy_token');
+    
+    if (!assistanceForm.requestType || !assistanceForm.notes.trim()) {
+      alert('Please fill in all required fields.');
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/customer/assistance', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          productId: assistanceForm.productId ? parseInt(assistanceForm.productId, 10) : null,
+          requestType: assistanceForm.requestType,
+          notes: assistanceForm.notes.trim()
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAssistanceRequests(prev => [data.request, ...prev]);
+        setShowAssistanceModal(false);
+        setAssistanceForm({ productId: '', requestType: 'PRODUCT_INQUIRY', notes: '' });
+        setSelectedProductForAssistance(null);
+        setFeedbackMsg('Assistance request submitted successfully!');
+      } else {
+        alert(data.message || 'Failed to submit assistance request.');
+      }
+    } catch (err) {
+      alert('Failed to submit assistance request.');
+    }
+  };
+
+  // Open Assistance Modal with optional product
+  const openAssistanceModal = (product = null) => {
+    setSelectedProductForAssistance(product);
+    if (product) {
+      setAssistanceForm(prev => ({
+        ...prev,
+        productId: product.productId || product.id,
+        requestType: 'PRODUCT_INQUIRY',
+        notes: `I have a question about ${product.name} (${product.modelNumber || product.model_number || ''}). `
+      }));
+    } else {
+      setAssistanceForm({ productId: '', requestType: 'PRODUCT_INQUIRY', notes: '' });
+    }
+    setShowAssistanceModal(true);
+  };
+
   return (
-    <div className="py-8 bg-slate-50 dark:bg-[#0B1120] text-slate-900 dark:text-white min-h-screen transition-colors duration-300">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
+    <div className="min-h-screen flex bg-slate-50 dark:bg-[#0B1120] text-slate-900 dark:text-white">
+      <DashboardSidebar
+        role="customer"
+        isOpen={mobileSidebarOpen}
+        onClose={() => setMobileSidebarOpen(false)}
+      />
+      <div className="min-w-0 flex-1 flex flex-col">
+        <header className="md:hidden sticky top-0 z-30 flex items-center gap-3 px-4 py-3 bg-white dark:bg-[#0F172A] border-b border-slate-200 dark:border-slate-800">
+          <button
+            onClick={() => setMobileSidebarOpen(true)}
+            aria-label="Open dashboard navigation"
+            className="p-2 -ml-2 rounded-lg text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <span className="text-sm font-bold text-slate-900 dark:text-white">Customer Dashboard</span>
+        </header>
+        <div className="py-8 bg-slate-50 dark:bg-[#0B1120] text-slate-900 dark:text-white min-h-screen transition-colors duration-300">
+      <div className="optibuy-container space-y-8">
 
         {/* Feedback Banner */}
         {feedbackMsg && (
@@ -297,7 +511,7 @@ const CustomerDashboard = () => {
         )}
 
         {/* Section A: Customer Welcome Banner */}
-        <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-[#2563EB]/40 rounded-3xl p-8 sm:p-10 text-white shadow-2xl relative overflow-hidden border border-slate-700">
+        <div id="profile" className="bg-gradient-to-br from-slate-900 via-slate-800 to-[#2563EB]/40 rounded-3xl p-8 sm:p-10 text-white shadow-2xl relative overflow-hidden border border-slate-700">
           <div className="absolute top-0 right-0 w-96 h-96 bg-[#06B6D4]/20 rounded-full blur-3xl pointer-events-none" />
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center relative z-10">
@@ -306,7 +520,7 @@ const CustomerDashboard = () => {
                 <UserCheck className="w-4 h-4 text-emerald-400" />
                 <span>Customer Decision Support Portal</span>
               </div>
-              <h1 className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white leading-tight">
+              <h1 id="dashboard-header" className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white leading-tight">
                 Welcome back, <span className="gradient-text">{profile?.fullName || user?.fullName || 'Customer'}</span>!
               </h1>
               <p className="text-slate-200 text-base sm:text-lg leading-relaxed font-medium">
@@ -336,7 +550,7 @@ const CustomerDashboard = () => {
         </div>
 
         {/* Section B: Quick Actions Bar */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-8 gap-4">
           <Link
             to="/products"
             className="glass-card rounded-2xl p-5 border border-slate-200/90 dark:border-slate-800 hover:shadow-xl transition-all text-center flex flex-col items-center gap-2.5 group"
@@ -395,6 +609,26 @@ const CustomerDashboard = () => {
               <Calculator className="w-6 h-6" />
             </div>
             <span className="text-sm font-bold text-slate-800 dark:text-slate-200">EMI Calculator</span>
+          </button>
+
+          <a
+            href="#order-history"
+            className="glass-card rounded-2xl p-5 border border-slate-200/90 dark:border-slate-800 hover:shadow-xl transition-all text-center flex flex-col items-center gap-2.5 group"
+          >
+            <div className="w-12 h-12 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <Package className="w-6 h-6" />
+            </div>
+            <span className="text-sm font-bold text-slate-800 dark:text-slate-200">Order History ({orders.length})</span>
+          </a>
+
+          <button
+            onClick={() => openAssistanceModal()}
+            className="glass-card rounded-2xl p-5 border border-slate-200/90 dark:border-slate-800 hover:shadow-xl transition-all text-center flex flex-col items-center gap-2.5 group"
+          >
+            <div className="w-12 h-12 rounded-2xl bg-orange-50 dark:bg-orange-950/60 text-orange-600 dark:text-orange-400 flex items-center justify-center group-hover:scale-110 transition-transform">
+              <LifeBuoy className="w-6 h-6" />
+            </div>
+            <span className="text-sm font-bold text-slate-800 dark:text-slate-200">Request Assistance</span>
           </button>
         </div>
 
@@ -554,6 +788,436 @@ const CustomerDashboard = () => {
               </div>
             </div>
           </div>
+        </div>
+
+        {/* Section F: Order History */}
+        <div id="order-history" className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-indigo-500">
+                PostgreSQL Order Records
+              </span>
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">
+                Your Order History ({orders.length})
+              </h2>
+            </div>
+          </div>
+
+          {ordersLoading ? (
+            <div className="p-8 rounded-3xl bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 text-center space-y-3">
+              <div className="w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
+              <h3 className="text-lg font-bold text-slate-700 dark:text-slate-300">Loading Orders...</h3>
+              <p className="text-xs text-slate-500">Fetching your order history from PostgreSQL.</p>
+            </div>
+          ) : orders.length === 0 ? (
+            <div className="p-8 rounded-3xl bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 text-center space-y-3">
+              <Package className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto" />
+              <h3 className="text-lg font-bold text-slate-700 dark:text-slate-300">No Orders Yet</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                You haven't placed any orders yet. Start shopping to see your order history here.
+              </p>
+              <Link to="/products" className="inline-block px-5 py-2.5 rounded-xl font-bold text-xs text-white bg-blue-600 hover:bg-blue-700">
+                Browse Products
+              </Link>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {orders.map((order) => (
+                <div key={order.orderId} className="glass-card rounded-3xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4 flex flex-col sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-4 flex-1">
+                    <div className="w-16 h-16 rounded-2xl bg-indigo-50 dark:bg-indigo-950/60 flex items-center justify-center flex-shrink-0">
+                      <Package className="w-8 h-8 text-indigo-600 dark:text-indigo-400" />
+                    </div>
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-3 text-sm">
+                        <span className="font-bold text-slate-900 dark:text-white">Order #{order.orderId}</span>
+                        <span className="text-xs font-bold px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                          {order.formattedDate}
+                        </span>
+                        <span className={`text-xs font-bold px-2 py-1 rounded-full ${
+                          order.orderStatus === 'COMPLETED' ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300' :
+                          order.orderStatus === 'SHIPPED' ? 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300' :
+                          order.orderStatus === 'PROCESSING' ? 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300' :
+                          'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300'
+                        }`}>
+                          {order.orderStatus}
+                        </span>
+                        <span className={`text-xs font-bold px-2 py-1 rounded-full ${
+                          order.paymentStatus === 'PAID' ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300' :
+                          'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300'
+                        }`}>
+                          {order.paymentStatus}
+                        </span>
+                      </div>
+                      <div className="text-lg font-extrabold text-slate-900 dark:text-white">{formatCurrencyINR(order.totalAmount)}</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleViewOrderDetails(order.orderId)}
+                    className="w-full sm:w-auto py-2 px-4 rounded-xl font-bold text-xs text-white bg-indigo-600 hover:bg-indigo-700 flex items-center justify-center gap-1.5"
+                  >
+                    <Eye className="w-4 h-4" />
+                    <span>View Details</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Section G: Customer Assistance Requests */}
+        <div id="assistance-requests" className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-orange-500">
+                PostgreSQL Support Tickets
+              </span>
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">
+                Assistance Requests ({assistanceRequests.length})
+              </h2>
+            </div>
+            <button
+              onClick={() => openAssistanceModal()}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-orange-600 hover:bg-orange-700 shadow-md"
+            >
+              <Send className="w-4 h-4" />
+              <span>New Request</span>
+            </button>
+          </div>
+
+          {assistanceLoading ? (
+            <div className="p-8 rounded-3xl bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 text-center space-y-3">
+              <div className="w-10 h-10 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto" />
+              <h3 className="text-lg font-bold text-slate-700 dark:text-slate-300">Loading Requests...</h3>
+              <p className="text-xs text-slate-500">Fetching your assistance requests from PostgreSQL.</p>
+            </div>
+          ) : assistanceRequests.length === 0 ? (
+            <div className="p-8 rounded-3xl bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 text-center space-y-3">
+              <LifeBuoy className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto" />
+              <h3 className="text-lg font-bold text-slate-700 dark:text-slate-300">No Assistance Requests</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                You haven't submitted any assistance requests yet. Click "New Request" to contact our sales executives.
+              </p>
+              <button
+                onClick={() => openAssistanceModal()}
+                className="inline-block px-5 py-2.5 rounded-xl font-bold text-xs text-white bg-orange-600 hover:bg-orange-700"
+              >
+                Create New Request
+              </button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {assistanceRequests.map((req) => (
+                <div key={req.id} className="glass-card rounded-3xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-start gap-4 flex-1">
+                      <div className="w-12 h-12 rounded-2xl bg-orange-50 dark:bg-orange-950/60 flex items-center justify-center flex-shrink-0">
+                        <MessageSquare className="w-6 h-6 text-orange-600 dark:text-orange-400" />
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-3 text-sm">
+                          <span className="font-bold text-slate-900 dark:text-white">Request #{req.id}</span>
+                          <span className="text-xs font-bold px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                            {new Date(req.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          <span className={`text-xs font-bold px-2 py-1 rounded-full ${
+                            req.status === 'NEW' ? 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300' :
+                            req.status === 'IN_PROGRESS' ? 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300' :
+                            req.status === 'RESOLVED' ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300' :
+                            'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300'
+                          }`}>
+                            {req.status}
+                          </span>
+                          <span className="text-xs font-bold px-2 py-1 rounded-full bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300">
+                            {req.requestType}
+                          </span>
+                        </div>
+                        {req.productName && (
+                          <div className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
+                            <span className="font-medium">Product:</span>
+                            <span>{req.productName}</span>
+                            {req.productPrice && (
+                              <span className="font-bold text-orange-600 dark:text-orange-400">{formatCurrencyINR(req.productPrice)}</span>
+                            )}
+                          </div>
+                        )}
+                        <p className="text-sm text-slate-700 dark:text-slate-300">{req.notes}</p>
+                        {req.assignedSalesPerson ? (
+                          <div className="flex items-center gap-2 p-2.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300">
+                            <UserCheck className="w-4 h-4 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
+                            <span>Assigned Sales Executive: <strong className="font-semibold">{req.assignedSalesPerson}</strong></span>
+                            {req.salesPersonPhone && (
+                              <span className="text-emerald-600 dark:text-emerald-400">({req.salesPersonPhone})</span>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-slate-400 dark:text-slate-500 italic">
+                            Waiting for showroom executive assignment...
+                          </div>
+                        )}
+                        {req.updatedAt && req.updatedAt !== req.createdAt && (
+                          <p className="text-[11px] text-slate-400">Last updated: {new Date(req.updatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Section H: Sales Executive Recommendations */}
+        <div id="sales-recommendations" className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-purple-500">
+                Expert Recommendations
+              </span>
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">
+                Recommendations from Sales Executives ({salesRecommendations.length})
+              </h2>
+            </div>
+          </div>
+
+          {salesRecLoading ? (
+            <div className="p-8 rounded-3xl bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 text-center space-y-3">
+              <div className="w-10 h-10 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto" />
+              <h3 className="text-lg font-bold text-slate-700 dark:text-slate-300">Loading Recommendations...</h3>
+              <p className="text-xs text-slate-500">Fetching personalized recommendations from PostgreSQL.</p>
+            </div>
+          ) : salesRecommendations.length === 0 ? (
+            <div className="p-8 rounded-3xl bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 text-center space-y-3">
+              <Sparkles className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto" />
+              <h3 className="text-lg font-bold text-slate-700 dark:text-slate-300">No Recommendations Yet</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                Our sales executives will send you personalized product recommendations based on your preferences and inquiries.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {salesRecommendations.map((rec) => (
+                <div key={rec.id} className="glass-card rounded-3xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4 flex flex-col justify-between">
+                  <div className="space-y-3">
+                    {rec.product && rec.product.image && (
+                      <img
+                        src={rec.product.image}
+                        alt={rec.product.name}
+                        className="w-full h-44 object-cover rounded-2xl"
+                      />
+                    )}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-purple-600 dark:text-purple-400">From Sales Team</span>
+                      <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">{rec.product?.stockStatus || 'Available'}</span>
+                    </div>
+                    {rec.product && (
+                      <>
+                        <h3 className="text-base font-bold text-slate-900 dark:text-white line-clamp-1">{rec.product.name}</h3>
+                        <div className="flex items-center justify-between">
+                          <span className="text-lg font-extrabold text-slate-900 dark:text-white">{formatCurrencyINR(rec.product.price)}</span>
+                          {rec.product.originalPrice && (
+                            <span className="text-xs text-slate-400 line-through">{formatCurrencyINR(rec.product.originalPrice)}</span>
+                          )}
+                        </div>
+                      </>
+                    )}
+                    <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800/40 space-y-2">
+                      <p className="text-xs font-bold text-purple-800 dark:text-purple-200">Expert Note:</p>
+                      <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">{rec.recommendationNote}</p>
+                      <p className="text-[11px] text-slate-400">Recommended by: {rec.salesExecutiveName} • {new Date(rec.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
+                    </div>
+                  </div>
+                  {rec.product && (
+                    <Link
+                      to={`/products/${rec.product.productId}`}
+                      className="w-full py-2 rounded-xl font-bold text-xs text-white bg-purple-600 hover:bg-purple-700 flex items-center justify-center gap-1.5"
+                    >
+                      <Eye className="w-4 h-4" />
+                      <span>View Product</span>
+                    </Link>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Section I: Customer's Product Reviews */}
+        <div id="my-reviews" className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-amber-500">
+                PostgreSQL Review Records
+              </span>
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">
+                Your Product Reviews ({myReviews.length})
+              </h2>
+            </div>
+            <Link to="/products" className="text-sm font-bold text-[#2563EB] dark:text-cyan-400 hover:underline flex items-center gap-1">
+              <span>Review More Products</span>
+              <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
+
+          {reviewsLoading ? (
+            <div className="p-8 rounded-3xl bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 text-center space-y-3">
+              <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto" />
+              <h3 className="text-lg font-bold text-slate-700 dark:text-slate-300">Loading Reviews...</h3>
+              <p className="text-xs text-slate-500">Fetching your product reviews from PostgreSQL.</p>
+            </div>
+          ) : myReviews.length === 0 ? (
+            <div className="p-8 rounded-3xl bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 text-center space-y-3">
+              <Star className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto" />
+              <h3 className="text-lg font-bold text-slate-700 dark:text-slate-300">No Reviews Yet</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                You haven't written any product reviews yet. Browse products and share your experience!
+              </p>
+              <Link to="/products" className="inline-block px-5 py-2.5 rounded-xl font-bold text-xs text-white bg-blue-600 hover:bg-blue-700">
+                Browse Products
+              </Link>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {myReviews.map((review) => (
+                <div key={review.id} className="glass-card rounded-3xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+                  <div className="flex items-start gap-4">
+                    <div className="w-16 h-16 rounded-2xl bg-amber-50 dark:bg-amber-950/60 flex items-center justify-center flex-shrink-0">
+                      {review.product.image && (
+                        <img src={review.product.image} alt={review.product.name} className="w-14 h-14 object-cover rounded-xl" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-w-0 space-y-2">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <span className="font-bold text-slate-900 dark:text-white">{review.product.name}</span>
+                        <span className="text-xs font-bold px-2 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
+                          {review.product.brand}
+                        </span>
+                        <span className="text-xs font-bold px-2 py-1 rounded-full bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300">
+                          {review.status}
+                        </span>
+                        <span className="text-xs text-slate-500 dark:text-slate-400">
+                          {new Date(review.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center">
+                          {[1, 2, 3, 4, 5].map((star) => (
+                            <Star
+                              key={star}
+                              className={`w-5 h-5 ${star <= review.rating ? 'fill-amber-400 text-amber-400' : 'text-slate-300 dark:text-slate-600'}`}
+                            />
+                          ))}
+                        </div>
+                        <span className="text-sm font-bold text-slate-700 dark:text-slate-300">{review.rating.toFixed(1)}/5</span>
+                      </div>
+                      {review.title && (
+                        <p className="font-medium text-slate-900 dark:text-white">{review.title}</p>
+                      )}
+                      <p className="text-sm text-slate-600 dark:text-slate-400 line-clamp-2">{review.text}</p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-lg font-extrabold text-slate-900 dark:text-white">{formatCurrencyINR(review.product.price)}</p>
+                      <Link
+                        to={`/products/${review.product.id}`}
+                        className="inline-block mt-2 px-3 py-1.5 rounded-lg text-xs font-bold text-[#2563EB] dark:text-cyan-400 hover:underline"
+                      >
+                        View Product
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Section J: Product Match Scores - Decision Support Engine */}
+        <div id="match-scores" className="space-y-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-xs font-bold uppercase tracking-wider text-purple-500">
+                Decision Support Engine
+              </span>
+              <h2 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">
+                Product Match Scores ({matchScores.length})
+              </h2>
+            </div>
+            <button
+              onClick={() => setShowMatchScoreModal(true)}
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-purple-600 hover:bg-purple-700 shadow-md"
+            >
+              <Sparkles className="w-4 h-4" />
+              <span>Recalculate with Custom Preferences</span>
+            </button>
+          </div>
+
+          {matchScoreLoading ? (
+            <div className="p-8 rounded-3xl bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 text-center space-y-3">
+              <div className="w-10 h-10 border-4 border-purple-500 border-t-transparent rounded-full animate-spin mx-auto" />
+              <h3 className="text-lg font-bold text-slate-700 dark:text-slate-300">Calculating Match Scores...</h3>
+              <p className="text-xs text-slate-500">Analyzing products against your preferences from PostgreSQL.</p>
+            </div>
+          ) : matchScores.length === 0 ? (
+            <div className="p-8 rounded-3xl bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 text-center space-y-3">
+              <Sparkles className="w-12 h-12 text-slate-300 dark:text-slate-700 mx-auto" />
+              <h3 className="text-lg font-bold text-slate-700 dark:text-slate-300">No Match Scores Available</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                Set your preferences and browse products to see personalized match scores.
+              </p>
+              <button
+                onClick={() => setShowPrefModal(true)}
+                className="inline-block px-5 py-2.5 rounded-xl font-bold text-xs text-white bg-purple-600 hover:bg-purple-700"
+              >
+                Set Preferences
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {matchScores.slice(0, 12).map((product) => (
+                <div key={product.product_id || product.id} className="glass-card rounded-3xl p-5 border border-slate-200 dark:border-slate-800 shadow-sm space-y-4 flex flex-col justify-between">
+                  <div className="space-y-3">
+                    <img
+                      src={product.image || 'https://images.unsplash.com/photo-1695048133142-1a20484d2569?w=600&auto=format&fit=crop&q=80'}
+                      alt={product.name}
+                      className="w-full h-44 object-cover rounded-2xl"
+                    />
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-purple-600 dark:text-purple-400">Match Score</span>
+                      <span className={`text-xs font-bold px-2.5 py-1 rounded-full ${
+                        product.matchScore >= 80 ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300' :
+                        product.matchScore >= 60 ? 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300' :
+                        'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300'
+                      }`}>
+                        {product.matchScore}%
+                      </span>
+                    </div>
+                    <h3 className="text-base font-bold text-slate-900 dark:text-white line-clamp-1">{product.name}</h3>
+                    <div className="flex items-center justify-between">
+                      <span className="text-lg font-extrabold text-slate-900 dark:text-white">{formatCurrencyINR(product.price)}</span>
+                      {product.originalPrice && (
+                        <span className="text-xs text-slate-400 line-through">{formatCurrencyINR(product.originalPrice)}</span>
+                      )}
+                    </div>
+                    <div className="p-3 rounded-xl bg-purple-50 dark:bg-purple-950/40 border border-purple-200 dark:border-purple-800/40 space-y-1">
+                      <p className="text-xs font-bold text-purple-800 dark:text-purple-200">Why this score?</p>
+                      {Object.entries(product.matchDetails || {}).map(([key, detail]) => (
+                        <p key={key} className="text-[11px] text-slate-700 dark:text-slate-300">
+                          <span className="font-medium capitalize">{key}:</span> {detail.reason} ({detail.score}/{detail.max})
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => { setSelectedMatchProduct(product); setShowMatchScoreModal(true); }}
+                    className="w-full py-2 rounded-xl font-bold text-xs text-white bg-purple-600 hover:bg-purple-700 flex items-center justify-center gap-1.5"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    <span>View Detailed Breakdown</span>
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
       </div>
@@ -771,6 +1435,228 @@ const CustomerDashboard = () => {
         </div>
       )}
 
+      {/* ASSISTANCE REQUEST MODAL */}
+      {showAssistanceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 max-w-lg w-full space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">Request Customer Assistance</h3>
+              <button onClick={() => { setShowAssistanceModal(false); setSelectedProductForAssistance(null); }} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateAssistance} className="space-y-4 text-xs font-bold">
+              {selectedProductForAssistance && (
+                <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800/40 flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-white dark:bg-slate-800 flex items-center justify-center flex-shrink-0">
+                    <img src={selectedProductForAssistance.image} alt={selectedProductForAssistance.name} className="w-8 h-8 object-cover rounded-lg" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold text-slate-900 dark:text-white truncate">{selectedProductForAssistance.name}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{selectedProductForAssistance.brand} • {formatCurrencyINR(selectedProductForAssistance.price)}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedProductForAssistance(null)}
+                    className="text-slate-400 hover:text-slate-600 p-1"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              )}
+
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 mb-1">Request Type</label>
+                <select
+                  value={assistanceForm.requestType}
+                  onChange={(e) => setAssistanceForm({ ...assistanceForm, requestType: e.target.value })}
+                  className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                >
+                  <option value="PRODUCT_INQUIRY">Product Inquiry</option>
+                  <option value="PRICE_CHECK">Price Check / Quote</option>
+                  <option value="STOCK_AVAILABILITY">Stock Availability</option>
+                  <option value="TECHNICAL_SPEC">Technical Specifications</option>
+                  <option value="COMPARISON_HELP">Comparison Assistance</option>
+                  <option value="PURCHASE_GUIDANCE">Purchase Guidance</option>
+                  <option value="POST_SALE_SUPPORT">Post-Sale Support</option>
+                  <option value="GENERAL_INQUIRY">General Inquiry</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 mb-1">Your Message / Question</label>
+                <textarea
+                  value={assistanceForm.notes}
+                  onChange={(e) => setAssistanceForm({ ...assistanceForm, notes: e.target.value })}
+                  rows={5}
+                  placeholder="Describe your question or request in detail. Our sales executives will respond within 24 hours."
+                  className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white resize-none"
+                  required
+                />
+              </div>
+
+              <div className="pt-3 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setShowAssistanceModal(false); setSelectedProductForAssistance(null); }}
+                  className="px-5 py-2.5 rounded-xl font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl font-bold text-white bg-orange-600 hover:bg-orange-700"
+                >
+                  <Send className="w-4 h-4 mr-2" />
+                  Submit Request
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ORDER DETAIL MODAL */}
+      {showOrderDetailModal && selectedOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-md">
+          <motion.div
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            exit={{ scale: 0.9, opacity: 0 }}
+            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 max-w-3xl w-full max-h-[90vh] overflow-y-auto shadow-2xl relative"
+          >
+            <button
+              onClick={() => { setShowOrderDetailModal(false); setSelectedOrder(null); }}
+              className="absolute top-5 right-5 p-2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="space-y-6">
+              {/* Order Header */}
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
+                <div>
+                  <span className="text-xs font-bold uppercase tracking-wider text-indigo-500 dark:text-indigo-400">Order Details</span>
+                  <h3 className="text-2xl font-extrabold text-slate-900 dark:text-white">Order #{selectedOrder.orderId}</h3>
+                  <p className="text-sm text-slate-500 dark:text-slate-400">Placed on {selectedOrder.formattedDate}</p>
+                </div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className={`px-3 py-1.5 rounded-full text-xs font-bold ${
+                    selectedOrder.orderStatus === 'COMPLETED' ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300' :
+                    selectedOrder.orderStatus === 'SHIPPED' ? 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300' :
+                    selectedOrder.orderStatus === 'PROCESSING' ? 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300' :
+                    'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300'
+                  }`}>
+                    {selectedOrder.orderStatus}
+                  </span>
+                  <span className={`px-3 py-1.5 rounded-full text-xs font-bold ${
+                    selectedOrder.paymentStatus === 'PAID' ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300' :
+                    'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300'
+                  }`}>
+                    {selectedOrder.paymentStatus}
+                  </span>
+                </div>
+              </div>
+
+              {/* Order Items */}
+              <div>
+                <h4 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Order Items</h4>
+                <div className="space-y-3">
+                  {selectedOrder.items.map((item) => (
+                    <div key={item.itemId} className="flex items-center gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200/80 dark:border-slate-700/80">
+                      <img
+                        src={item.image || 'https://images.unsplash.com/photo-1695048133142-1a20484d2569?w=600&auto=format&fit=crop&q=80'}
+                        alt={item.productName}
+                        className="w-16 h-16 object-cover rounded-xl"
+                      />
+                      <div className="flex-1 min-w-0 space-y-1">
+                        <p className="font-bold text-slate-900 dark:text-white truncate">{item.productName}</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{item.brand} • {item.category}</p>
+                        {item.modelNumber && <p className="text-xs text-slate-400 dark:text-slate-500">{item.modelNumber}</p>}
+                      </div>
+                      <div className="text-right space-y-1">
+                        <p className="text-sm font-bold text-slate-900 dark:text-white">Qty: {item.quantity}</p>
+                        <p className="text-sm font-bold text-slate-900 dark:text-white">{formatCurrencyINR(item.unitPrice)} each</p>
+                        <p className="text-lg font-extrabold text-indigo-600 dark:text-indigo-400">{formatCurrencyINR(item.lineTotal)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Order Summary */}
+              <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-4 border border-slate-200/80 dark:border-slate-700/80 space-y-2">
+                <h4 className="text-lg font-bold text-slate-900 dark:text-white">Order Summary</h4>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-600 dark:text-slate-400">Subtotal</span>
+                  <span className="font-bold text-slate-900 dark:text-white">{formatCurrencyINR(selectedOrder.totalAmount)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-slate-600 dark:text-slate-400">Shipping</span>
+                  <span className="font-bold text-slate-900 dark:text-white">Included</span>
+                </div>
+                <div className="flex justify-between text-sm border-t border-slate-200 dark:border-slate-700 pt-2">
+                  <span className="font-bold text-slate-900 dark:text-white">Total</span>
+                  <span className="font-extrabold text-indigo-600 dark:text-indigo-400 text-lg">{formatCurrencyINR(selectedOrder.totalAmount)}</span>
+                </div>
+              </div>
+
+              {/* Timeline */}
+              <div>
+                <h4 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Order Timeline</h4>
+                <div className="space-y-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0">
+                      <CheckCircle2 className="w-4 h-4 text-white" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-slate-900 dark:text-white">Order Placed</p>
+                      <p className="text-sm text-slate-500 dark:text-slate-400">{selectedOrder.formattedDate}</p>
+                    </div>
+                  </div>
+                  {selectedOrder.orderStatus !== 'PROCESSING' && (
+                    <div className="flex items-start gap-3 ml-4 border-l-2 border-slate-200 dark:border-slate-700 pl-4">
+                      <div className="w-8 h-8 rounded-full bg-amber-600 flex items-center justify-center flex-shrink-0 -ml-4">
+                        <Package className="w-4 h-4 text-white" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-900 dark:text-white">Order Processing</p>
+                        <p className="text-sm text-slate-500 dark:text-slate-400">Your order is being prepared</p>
+                      </div>
+                    </div>
+                  )}
+                  {['SHIPPED', 'COMPLETED'].includes(selectedOrder.orderStatus) && (
+                    <div className="flex items-start gap-3 ml-4 border-l-2 border-slate-200 dark:border-slate-700 pl-4">
+                      <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center flex-shrink-0 -ml-4">
+                        <RotateCcw className="w-4 h-4 text-white" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-900 dark:text-white">Shipped</p>
+                        <p className="text-sm text-slate-500 dark:text-slate-400">Your order is on the way</p>
+                      </div>
+                    </div>
+                  )}
+                  {selectedOrder.orderStatus === 'COMPLETED' && (
+                    <div className="flex items-start gap-3 ml-4 border-l-2 border-slate-200 dark:border-slate-700 pl-4">
+                      <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center flex-shrink-0 -ml-4">
+                        <CheckCircle2 className="w-4 h-4 text-white" />
+                      </div>
+                      <div>
+                        <p className="font-bold text-slate-900 dark:text-white">Delivered</p>
+                        <p className="text-sm text-slate-500 dark:text-slate-400">Order completed successfully</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+    </div>
+      </div>
     </div>
   );
 };

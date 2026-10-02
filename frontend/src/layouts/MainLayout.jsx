@@ -15,7 +15,7 @@ const ScrollToTop = () => {
 
 const MainLayout = () => {
   const { pathname } = useLocation();
-  const isDashboardView = pathname.startsWith('/admin-dashboard') || pathname.startsWith('/sales-dashboard');
+  const isDashboardView = pathname.startsWith('/admin-dashboard') || pathname.startsWith('/sales-dashboard') || pathname.startsWith('/customer-dashboard');
 
   if (isDashboardView) {
     return (

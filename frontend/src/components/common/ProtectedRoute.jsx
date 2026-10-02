@@ -5,7 +5,7 @@ import { getStoredUser } from '../../services/authService';
 const normalizeRole = (role) => {
   if (!role) return 'customer';
   const r = role.toLowerCase().trim();
-  if (r === 'sales' || r === 'salesperson' || r === 'sales_person') return 'salesperson';
+  if (r === 'sales' || r === 'salesperson' || r === 'sales_person' || r === 'sales_executive' || r === 'sales executive') return 'salesperson';
   if (r === 'admin' || r === 'administrator') return 'admin';
   return 'customer';
 };
