@@ -65,8 +65,21 @@ const AdminDashboard = () => {
   const { theme, toggleTheme } = useTheme();
   const [user, setUser] = useState(getStoredUser());
 
+  const parseTabFromLocation = () => {
+    const rawHash = location.hash || (location.pathname.includes('#') ? '#' + location.pathname.split('#')[1] : '');
+    const clean = rawHash.replace('#', '');
+    const validTabs = [
+      'overview', 'requests', 'assistancerequests', 'users', 'customers', 'salespersons',
+      'products', 'categories', 'inventory', 'lowstock',
+      'orders', 'salesoverview', 'transactions',
+      'reviews', 'analytics', 'reports',
+      'health', 'audit', 'settings'
+    ];
+    return validTabs.includes(clean) ? clean : 'overview';
+  };
+
   // Tab & Layout Navigation State
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState(parseTabFromLocation);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
@@ -98,17 +111,11 @@ const AdminDashboard = () => {
 
   // Sync hash with active tab
   useEffect(() => {
-    const hash = location.hash.replace('#', '');
-    if (hash && [
-      'overview', 'requests', 'users', 'customers', 'salespersons',
-      'products', 'categories', 'inventory', 'lowstock',
-      'orders', 'salesoverview', 'transactions',
-      'reviews', 'analytics', 'reports',
-      'health', 'audit', 'settings'
-    ].includes(hash)) {
-      setActiveTab(hash);
+    const tab = parseTabFromLocation();
+    if (tab) {
+      setActiveTab(tab);
     }
-  }, [location.hash]);
+  }, [location.hash, location.pathname]);
 
   // Sync user state from auth storage
   useEffect(() => {
@@ -134,6 +141,8 @@ const AdminDashboard = () => {
     activeProducts: 0,
     lowStockProducts: 0,
     outOfStockProducts: 0,
+    totalAssistanceRequests: 0,
+    pendingAssistanceRequests: 0,
     totalOrders: 0,
     totalRevenue: 0
   });
@@ -148,6 +157,16 @@ const AdminDashboard = () => {
   const [inventorySearchQuery, setInventorySearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('All');
 
+  // Customer Assistance Requests State
+  const [assistanceRequestsList, setAssistanceRequestsList] = useState([]);
+  const [assistanceCounts, setAssistanceCounts] = useState({ total: 0, new: 0, inProgress: 0, resolved: 0, cancelled: 0 });
+  const [assistanceStatusFilter, setAssistanceStatusFilter] = useState('ALL');
+  const [assistanceSearchQuery, setAssistanceSearchQuery] = useState('');
+
+  // Sales Trends State (Historical orders aggregation)
+  const [salesTrends, setSalesTrends] = useState([]);
+  const [productFormError, setProductFormError] = useState('');
+
   // Database-Driven Data States
   const [categoriesList, setCategoriesList] = useState([]);
   const [ordersList, setOrdersList] = useState([]);
@@ -158,6 +177,7 @@ const AdminDashboard = () => {
   const [showAddProductModal, setShowAddProductModal] = useState(false);
   const [showAddSalesModal, setShowAddSalesModal] = useState(false);
   const [showAddCategoryModal, setShowAddCategoryModal] = useState(false);
+  const [showAddBrandModal, setShowAddBrandModal] = useState(false);
 
   const [newProduct, setNewProduct] = useState({
     name: '',
@@ -172,6 +192,12 @@ const AdminDashboard = () => {
     description: ''
   });
 
+  const [newBrand, setNewBrand] = useState({
+    name: '',
+    description: '',
+    logoUrl: ''
+  });
+
   const [newSalesperson, setNewSalesperson] = useState({
     fullName: '',
     email: '',
@@ -181,6 +207,41 @@ const AdminDashboard = () => {
 
   // Catalog Inventory State
   const [inventoryList, setInventoryList] = useState([]);
+  const [brandsList, setBrandsList] = useState([]);
+  const [brandSearchQuery, setBrandSearchQuery] = useState('');
+
+  // Edit Product Modal State
+  const [showEditProductModal, setShowEditProductModal] = useState(false);
+  const [editingProduct, setEditingProduct] = useState(null);
+  const [editProductForm, setEditProductForm] = useState({
+    name: '',
+    modelNumber: '',
+    description: '',
+    price: '',
+    originalPrice: '',
+    stockQuantity: '',
+    discountPercentage: '',
+    status: 'ACTIVE',
+    categoryId: '',
+    brandId: '',
+    image: ''
+  });
+
+  const [editingBrand, setEditingBrand] = useState(null);
+  const [editBrandForm, setEditBrandForm] = useState({
+    name: '',
+    description: '',
+    logoUrl: '',
+    status: 'ACTIVE'
+  });
+
+  // Stock Update Modal State
+  const [showStockModal, setShowStockModal] = useState(false);
+  const [stockProduct, setStockProduct] = useState(null);
+  const [stockForm, setStockForm] = useState({
+    stockQuantity: '',
+    stockStatus: 'IN_STOCK'
+  });
 
   // System Audit Logs
   const [auditLogs] = useState([
@@ -209,7 +270,8 @@ const AdminDashboard = () => {
       const data = await res.json();
       if (data.success && data.data) {
         if (data.data.users) setUsersList(data.data.users);
-        setKpis({
+        setKpis(prev => ({
+          ...prev,
           totalUsers: data.data.totalUsers || 0,
           totalCustomers: data.data.totalCustomers || 0,
           totalApprovedSalesPersons: data.data.totalApprovedSalesPersons || 0,
@@ -218,9 +280,11 @@ const AdminDashboard = () => {
           activeProducts: data.data.activeProducts || 0,
           lowStockProducts: data.data.lowStockProducts || 0,
           outOfStockProducts: data.data.outOfStockProducts || 0,
+          totalAssistanceRequests: data.data.totalAssistanceRequests || 0,
+          pendingAssistanceRequests: data.data.pendingAssistanceRequests || 0,
           totalOrders: data.data.totalOrders || 0,
           totalRevenue: data.data.totalRevenue || 0
-        });
+        }));
       } else {
         setErrorMsg(data.message || 'Failed to retrieve database stats.');
       }
@@ -241,11 +305,35 @@ const AdminDashboard = () => {
         setSalesRequestsList(reqData.requests);
       }
 
+      // 4. Fetch Customer Assistance Requests from PostgreSQL
+      const astRes = await fetch('/api/admin/dashboard/assistance-requests', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const astData = await astRes.json();
+      if (astData.success && astData.requests) {
+        setAssistanceRequestsList(astData.requests);
+        if (astData.counts) {
+          setAssistanceCounts(astData.counts);
+          setKpis(prev => ({
+            ...prev,
+            totalAssistanceRequests: astData.total || astData.counts.total || 0,
+            pendingAssistanceRequests: astData.counts.new || 0
+          }));
+        }
+      }
+
       // 5. Fetch Product Categories from PostgreSQL
       const catRes = await fetch('/api/categories');
       const catData = await catRes.json();
       if (catData.success && catData.categories) {
         setCategoriesList(catData.categories);
+      }
+
+      // 5b. Fetch Brands from PostgreSQL
+      const brandRes = await fetch('/api/products/brands');
+      const brandData = await brandRes.json();
+      if (brandData.success && brandData.brands) {
+        setBrandsList(brandData.brands);
       }
 
       // 6. Fetch Orders Fulfillment List from PostgreSQL
@@ -273,6 +361,15 @@ const AdminDashboard = () => {
       const revData = await revRes.json();
       if (revData.success && revData.data) {
         setRevenueData(revData.data);
+      }
+
+      // 9. Fetch Verified Sales Trend (No Fake Data)
+      const trendRes = await fetch('/api/admin/dashboard/sales-trend', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const trendData = await trendRes.json();
+      if (trendData.success && trendData.trends) {
+        setSalesTrends(trendData.trends);
       }
 
     } catch (err) {
@@ -446,8 +543,10 @@ const AdminDashboard = () => {
 
   // User Status Toggle (Active/Inactive)
   const handleToggleUserStatus = async (targetUser) => {
-    if (targetUser.userId === user?.userId || targetUser.user_id === user?.user_id) {
-      alert("Security Restriction: You cannot deactivate your own active administrator account.");
+    const targetId = targetUser.userId || targetUser.user_id;
+    const currentId = user?.userId || user?.user_id;
+    if (targetId === currentId || targetUser.email === 'optibuyadmin@gmail.com') {
+      alert("Security Restriction: You cannot deactivate your own active administrator account or the primary system administrator.");
       return;
     }
 
@@ -455,7 +554,7 @@ const AdminDashboard = () => {
     const token = localStorage.getItem('optibuy_token');
 
     try {
-      const res = await fetch(`/api/dashboard/admin/users/${targetUser.userId || targetUser.user_id}`, {
+      const res = await fetch(`/api/dashboard/admin/users/${targetId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -476,11 +575,47 @@ const AdminDashboard = () => {
     }
   };
 
+  // Update Order Fulfillment Status
+  const handleUpdateOrderStatus = async (orderId, newStatus) => {
+    const token = localStorage.getItem('optibuy_token');
+    try {
+      const res = await fetch(`/api/admin/orders/${orderId}/status`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ status: newStatus })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setFeedbackMsg(`Order #${orderId} fulfillment status updated to ${newStatus}.`);
+        fetchAdminDashboardData();
+      } else {
+        alert(data.message || "Failed to update order status.");
+      }
+    } catch (err) {
+      alert("Server connection error updating order status.");
+    }
+  };
+
   // Add Product to Catalog
   const handleAddProductSubmit = async (e) => {
     e.preventDefault();
+    setProductFormError('');
     if (!newProduct.name || !newProduct.price) {
-      alert("Please fill in product name and price.");
+      setProductFormError("Please fill in product name and price.");
+      return;
+    }
+
+    const priceNum = parseFloat(newProduct.price);
+    const stockNum = parseInt(newProduct.stock || 0, 10);
+    if (isNaN(priceNum) || priceNum < 0) {
+      setProductFormError("Product price cannot be negative.");
+      return;
+    }
+    if (isNaN(stockNum) || stockNum < 0) {
+      setProductFormError("Stock quantity cannot be negative.");
       return;
     }
 
@@ -497,8 +632,8 @@ const AdminDashboard = () => {
           name: newProduct.name,
           brand: newProduct.brand,
           category: newProduct.category,
-          price: parseFloat(newProduct.price),
-          stockQuantity: parseInt(newProduct.stock || 15, 10),
+          price: priceNum,
+          stockQuantity: stockNum,
           image: 'https://images.unsplash.com/photo-1511707171634-5f897ff02aa9?w=600&auto=format&fit=crop&q=80'
         })
       });
@@ -510,10 +645,10 @@ const AdminDashboard = () => {
         setNewProduct({ name: '', brand: 'Apple', category: 'Smartphones', price: '', stock: '' });
         fetchAdminDashboardData();
       } else {
-        alert(data.message || "Failed to add product.");
+        setProductFormError(data.message || "Failed to add product.");
       }
     } catch (err) {
-      alert("Server error adding product.");
+      setProductFormError("Server error adding product.");
     }
   };
 
@@ -572,6 +707,136 @@ const AdminDashboard = () => {
     }
   };
 
+  // Open Edit Product Modal
+  const handleEditProduct = (product) => {
+    setEditingProduct(product);
+    setEditProductForm({
+      name: product.name || product.product_name,
+      modelNumber: product.modelNumber || '',
+      description: product.description || '',
+      price: product.price || product.price_inr,
+      originalPrice: product.originalPrice || product.original_price_inr || '',
+      stockQuantity: product.stockQuantity || product.stock_quantity || 0,
+      discountPercentage: product.discount || 0,
+      status: product.status || 'ACTIVE',
+      categoryId: product.categoryId || '',
+      brandId: product.brandId || '',
+      image: product.image || product.main_image_url || ''
+    });
+    setShowEditProductModal(true);
+  };
+
+  // Edit Product Submit
+  const handleEditProductSubmit = async (e) => {
+    e.preventDefault();
+    if (!editingProduct) return;
+
+    const priceNum = parseFloat(editProductForm.price);
+    const origPriceNum = editProductForm.originalPrice ? parseFloat(editProductForm.originalPrice) : null;
+    const stockNum = parseInt(editProductForm.stockQuantity, 10);
+    if (isNaN(priceNum) || priceNum < 0) {
+      alert("Product price cannot be negative.");
+      return;
+    }
+    if (origPriceNum !== null && (isNaN(origPriceNum) || origPriceNum < 0)) {
+      alert("Original price cannot be negative.");
+      return;
+    }
+    if (isNaN(stockNum) || stockNum < 0) {
+      alert("Stock quantity cannot be negative.");
+      return;
+    }
+    
+    const token = localStorage.getItem('optibuy_token');
+    const productId = editingProduct.id || editingProduct.product_id;
+    
+    try {
+      const res = await fetch(`/api/products/${productId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          name: editProductForm.name,
+          modelNumber: editProductForm.modelNumber,
+          description: editProductForm.description,
+          price: priceNum,
+          originalPrice: origPriceNum,
+          stockQuantity: stockNum,
+          discountPercentage: parseInt(editProductForm.discountPercentage || 0, 10),
+          status: editProductForm.status,
+          categoryId: editProductForm.categoryId || null,
+          brandId: editProductForm.brandId || null,
+          image: editProductForm.image
+        })
+      });
+      
+      const data = await res.json();
+      if (data.success) {
+        setFeedbackMsg(`Product "${editProductForm.name}" updated successfully!`);
+        setShowEditProductModal(false);
+        setEditingProduct(null);
+        fetchAdminDashboardData();
+      } else {
+        alert(data.message || "Failed to update product.");
+      }
+    } catch (err) {
+      alert("Server error updating product.");
+    }
+  };
+
+  // Open Stock Update Modal
+  const handleOpenStockModal = (product) => {
+    setStockProduct(product);
+    setStockForm({
+      stockQuantity: product.stockQuantity || product.stock_quantity || 0,
+      stockStatus: product.stockStatus || 'IN_STOCK'
+    });
+    setShowStockModal(true);
+  };
+
+  // Stock Update Submit
+  const handleStockUpdateSubmit = async (e) => {
+    e.preventDefault();
+    if (!stockProduct) return;
+
+    const stockNum = parseInt(stockForm.stockQuantity, 10);
+    if (isNaN(stockNum) || stockNum < 0) {
+      alert("Stock quantity cannot be negative.");
+      return;
+    }
+    
+    const token = localStorage.getItem('optibuy_token');
+    const productId = stockProduct.id || stockProduct.product_id;
+    
+    try {
+      const res = await fetch(`/api/products/${productId}/stock`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          stockQuantity: stockNum,
+          stockStatus: stockForm.stockStatus
+        })
+      });
+      
+      const data = await res.json();
+      if (data.success) {
+        setFeedbackMsg(`Stock updated for "${stockProduct.name || stockProduct.product_name}"!`);
+        setShowStockModal(false);
+        setStockProduct(null);
+        fetchAdminDashboardData();
+      } else {
+        alert(data.message || "Failed to update stock.");
+      }
+    } catch (err) {
+      alert("Server error updating stock.");
+    }
+  };
+
   // Filtered List Collections
   const customerList = usersList.filter(u => u.role === 'CUSTOMER');
   const salesPersonsList = usersList.filter(u => u.role === 'SALES_PERSON');
@@ -600,6 +865,25 @@ const AdminDashboard = () => {
     return categoryMatch && searchMatch;
   });
 
+  const filteredBrands = brandsList.filter(b => {
+    const searchMatch = brandSearchQuery === '' ||
+      (b.name || b.brand_name || '').toLowerCase().includes(brandSearchQuery.toLowerCase()) ||
+      (b.description || '').toLowerCase().includes(brandSearchQuery.toLowerCase());
+    return searchMatch;
+  });
+
+  const filteredAssistance = assistanceRequestsList.filter(req => {
+    const matchesStatus = assistanceStatusFilter === 'ALL' || req.status === assistanceStatusFilter;
+    const q = assistanceSearchQuery.toLowerCase();
+    const matchesSearch = !q ||
+      (req.customerName && req.customerName.toLowerCase().includes(q)) ||
+      (req.customerEmail && req.customerEmail.toLowerCase().includes(q)) ||
+      (req.customerRequirements && req.customerRequirements.toLowerCase().includes(q)) ||
+      (req.preferredCategory && req.preferredCategory.toLowerCase().includes(q)) ||
+      (req.salespersonName && req.salespersonName.toLowerCase().includes(q));
+    return matchesStatus && matchesSearch;
+  });
+
   // Grouped Sidebar Navigation Definition
   const navigationGroups = [
     {
@@ -612,6 +896,7 @@ const AdminDashboard = () => {
       groupTitle: 'PEOPLE & GOVERNANCE',
       items: [
         { id: 'requests', label: 'Sales Requests', icon: UserCheck, badge: pendingRequestsCombined.length || kpis.pendingSalesRequests || null },
+        { id: 'assistancerequests', label: 'Customer Assistance', icon: HelpCircle, badge: assistanceCounts.new || kpis.pendingAssistanceRequests || null },
         { id: 'users', label: 'All Users Accounts', icon: Users, badge: null },
         { id: 'customers', label: 'Customers Directory', icon: User, badge: customerList.length || kpis.totalCustomers || null },
         { id: 'salespersons', label: 'Sales Team Roster', icon: UserPlus, badge: salesPersonsList.length || kpis.totalApprovedSalesPersons || null }
@@ -622,6 +907,7 @@ const AdminDashboard = () => {
       items: [
         { id: 'products', label: 'Products Catalog', icon: Package, badge: null },
         { id: 'categories', label: 'Product Categories', icon: Layers, badge: null },
+        { id: 'brands', label: 'Brand Management', icon: Shield, badge: null },
         { id: 'inventory', label: 'Inventory Levels', icon: SlidersHorizontal, badge: null },
         { id: 'lowstock', label: 'Low Stock Alerts', icon: AlertTriangle, badge: inventoryList.filter(p => (p.stock || p.stock_quantity) <= 3).length || null }
       ]
@@ -965,7 +1251,7 @@ const AdminDashboard = () => {
 
         {/* MAIN CONTENT WORKSPACE */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-          <div className="max-w-[1600px] w-full mx-auto space-y-6">
+          <div className="optibuy-container space-y-6">
 
             {/* FEEDBACK SUCCESS BANNER */}
             {feedbackMsg && (
@@ -1052,8 +1338,8 @@ const AdminDashboard = () => {
                   </div>
                 </div>
 
-                {/* KPI Cards (6 Enterprise Polished Cards) */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+                {/* KPI Cards (Enterprise Polished Cards) */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-7 gap-4">
 
                   {/* 1. Total Users */}
                   <div
@@ -1066,17 +1352,17 @@ const AdminDashboard = () => {
                         <Users className="w-4.5 h-4.5" />
                       </div>
                     </div>
-                    <div className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">{kpis.totalUsers || usersList.length || 7}</div>
+                    <div className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">{kpis.totalUsers || usersList.length || 0}</div>
                     <div className="text-xs text-slate-500 font-medium">Registered accounts</div>
                   </div>
 
-                  {/* 2. Pending Requests */}
+                  {/* 2. Pending Salesperson Requests */}
                   <div
                     onClick={() => setActiveTab('requests')}
                     className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs hover:shadow-md transition-all cursor-pointer relative overflow-hidden border-t-4 border-t-amber-500 group"
                   >
                     <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wider">Pending Requests</span>
+                      <span className="text-[11px] font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wider">Sales Approvals</span>
                       <div className="p-2 rounded-xl bg-amber-50 dark:bg-amber-950/80 text-amber-600 dark:text-amber-400 group-hover:scale-110 transition-transform">
                         <Clock className="w-4.5 h-4.5" />
                       </div>
@@ -1084,11 +1370,31 @@ const AdminDashboard = () => {
                     <div className="text-3xl font-extrabold text-amber-600 dark:text-amber-400 tracking-tight">{pendingRequestsCombined.length}</div>
                     <div className="text-xs text-amber-600/90 font-extrabold flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                      <span>Requires admin review</span>
+                      <span>Pending review</span>
                     </div>
                   </div>
 
-                  {/* 3. Active Sales Staff */}
+                  {/* 3. Customer Assistance Requests */}
+                  <div
+                    onClick={() => setActiveTab('assistancerequests')}
+                    className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs hover:shadow-md transition-all cursor-pointer relative overflow-hidden border-t-4 border-t-purple-500 group"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-extrabold text-purple-600 dark:text-purple-400 uppercase tracking-wider">Assistance Requests</span>
+                      <div className="p-2 rounded-xl bg-purple-50 dark:bg-purple-950/80 text-purple-600 dark:text-purple-400 group-hover:scale-110 transition-transform">
+                        <HelpCircle className="w-4.5 h-4.5" />
+                      </div>
+                    </div>
+                    <div className="text-3xl font-extrabold text-purple-600 dark:text-purple-400 tracking-tight">
+                      {kpis.totalAssistanceRequests || assistanceCounts.total || assistanceRequestsList.length || 0}
+                    </div>
+                    <div className="text-xs text-purple-600/90 font-extrabold flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-purple-500 animate-pulse" />
+                      <span>{kpis.pendingAssistanceRequests || assistanceCounts.new || 0} new</span>
+                    </div>
+                  </div>
+
+                  {/* 4. Active Sales Staff */}
                   <div
                     onClick={() => setActiveTab('salespersons')}
                     className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs hover:shadow-md transition-all cursor-pointer relative overflow-hidden border-t-4 border-t-teal-500 group"
@@ -1100,12 +1406,12 @@ const AdminDashboard = () => {
                       </div>
                     </div>
                     <div className="text-3xl font-extrabold text-teal-600 dark:text-teal-400 tracking-tight">
-                      {kpis.totalApprovedSalesPersons || salesPersonsList.filter(s => s.status === 'ACTIVE').length || 1}
+                      {kpis.totalApprovedSalesPersons || salesPersonsList.filter(s => s.status === 'ACTIVE').length || 0}
                     </div>
-                    <div className="text-xs text-slate-500 font-medium">Currently approved</div>
+                    <div className="text-xs text-slate-500 font-medium">Approved on floor</div>
                   </div>
 
-                  {/* 4. Total Products */}
+                  {/* 5. Total Products */}
                   <div
                     onClick={() => setActiveTab('products')}
                     className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs hover:shadow-md transition-all cursor-pointer relative overflow-hidden border-t-4 border-t-indigo-500 group"
@@ -1116,11 +1422,11 @@ const AdminDashboard = () => {
                         <Package className="w-4.5 h-4.5" />
                       </div>
                     </div>
-                    <div className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">{kpis.totalProducts || inventoryList.length || 30}</div>
-                    <div className="text-xs text-slate-500 font-medium">Active catalog items</div>
+                    <div className="text-3xl font-extrabold text-slate-900 dark:text-white tracking-tight">{kpis.totalProducts || inventoryList.length || 0}</div>
+                    <div className="text-xs text-slate-500 font-medium">Catalog items</div>
                   </div>
 
-                  {/* 5. Low Stock */}
+                  {/* 6. Low Stock */}
                   <div
                     onClick={() => setActiveTab('lowstock')}
                     className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs hover:shadow-md transition-all cursor-pointer relative overflow-hidden border-t-4 border-t-rose-500 group"
@@ -1135,7 +1441,7 @@ const AdminDashboard = () => {
                     <div className="text-xs text-rose-600 dark:text-rose-400 font-extrabold">Requires restock</div>
                   </div>
 
-                  {/* 6. Total Orders */}
+                  {/* 7. Total Orders */}
                   <div
                     onClick={() => setActiveTab('orders')}
                     className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs hover:shadow-md transition-all cursor-pointer relative overflow-hidden border-t-4 border-t-emerald-500 group"
@@ -1146,8 +1452,8 @@ const AdminDashboard = () => {
                         <ShoppingBag className="w-4.5 h-4.5" />
                       </div>
                     </div>
-                    <div className="text-3xl font-extrabold text-emerald-600 dark:text-emerald-400 tracking-tight">{kpis.totalOrders || ordersList.length || 89}</div>
-                    <div className="text-xs text-slate-500 font-medium">Orders processed</div>
+                    <div className="text-3xl font-extrabold text-emerald-600 dark:text-emerald-400 tracking-tight">{kpis.totalOrders || ordersList.length || 0}</div>
+                    <div className="text-xs text-slate-500 font-medium">Orders recorded</div>
                   </div>
 
                 </div>
@@ -1160,7 +1466,7 @@ const AdminDashboard = () => {
                     <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
                       <div>
                         <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">Sales & Revenue Trend</h3>
-                        <p className="text-xs text-slate-500">Monthly store transaction volume and order metrics</p>
+                        <p className="text-xs text-slate-500">Live store transaction volume and verified order metrics from PostgreSQL</p>
                       </div>
                       <span className="text-xs font-bold text-blue-600 dark:text-cyan-400 bg-blue-50 dark:bg-blue-950/60 px-3 py-1 rounded-full border border-blue-200 dark:border-blue-800">
                         {salesTimePeriod}
@@ -1171,35 +1477,41 @@ const AdminDashboard = () => {
                     <div className="grid grid-cols-3 gap-4 p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800 text-center">
                       <div>
                         <span className="text-[10px] font-bold text-slate-400 uppercase">Gross Revenue</span>
-                        <div className="text-lg font-extrabold text-slate-900 dark:text-white">{formatCurrencyINR(revenueData.grossRevenue || kpis.totalRevenue || 1250000)}</div>
+                        <div className="text-lg font-extrabold text-slate-900 dark:text-white">{formatCurrencyINR(revenueData.grossRevenue || kpis.totalRevenue || 0)}</div>
                       </div>
                       <div>
                         <span className="text-[10px] font-bold text-slate-400 uppercase">Total Orders</span>
-                        <div className="text-lg font-extrabold text-blue-600 dark:text-cyan-400">{kpis.totalOrders || 89}</div>
+                        <div className="text-lg font-extrabold text-blue-600 dark:text-cyan-400">{kpis.totalOrders || ordersList.length || 0}</div>
                       </div>
                       <div>
                         <span className="text-[10px] font-bold text-slate-400 uppercase">Avg Order Value</span>
-                        <div className="text-lg font-extrabold text-emerald-600 dark:text-emerald-400">{formatCurrencyINR(revenueData.avgOrderValue || 14044)}</div>
+                        <div className="text-lg font-extrabold text-emerald-600 dark:text-emerald-400">{formatCurrencyINR(revenueData.avgOrderValue || 0)}</div>
                       </div>
                     </div>
 
-                    {/* SVG Chart Plot */}
-                    <div className="h-52 w-full pt-4 relative">
-                      <svg className="w-full h-full overflow-visible" viewBox="0 0 400 120" preserveAspectRatio="none">
-                        <defs>
-                          <linearGradient id="salesGradOverview" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#2563EB" stopOpacity="0.35" />
-                            <stop offset="100%" stopColor="#2563EB" stopOpacity="0.0" />
-                          </linearGradient>
-                        </defs>
-                        <line x1="0" y1="20" x2="400" y2="20" stroke="#CBD5E1" strokeDasharray="3 3" opacity="0.3" />
-                        <line x1="0" y1="60" x2="400" y2="60" stroke="#CBD5E1" strokeDasharray="3 3" opacity="0.3" />
-                        <line x1="0" y1="100" x2="400" y2="100" stroke="#CBD5E1" strokeDasharray="3 3" opacity="0.3" />
-
-                        <path d="M 0,90 Q 50,40 100,70 T 200,30 T 300,50 T 400,20 L 400,110 L 0,110 Z" fill="url(#salesGradOverview)" />
-                        <path d="M 0,90 Q 50,40 100,70 T 200,30 T 300,50 T 400,20" fill="none" stroke="#2563EB" strokeWidth="3" strokeLinecap="round" />
-                      </svg>
-                    </div>
+                    {/* Sales Analytics Chart or Empty State */}
+                    {(salesTrends.length === 0 || (revenueData.grossRevenue || 0) === 0) ? (
+                      <div className="h-52 w-full flex flex-col items-center justify-center p-6 text-center rounded-2xl bg-slate-50/50 dark:bg-slate-900/30 border border-dashed border-slate-200 dark:border-slate-800">
+                        <BarChart3 className="w-10 h-10 text-slate-400 mb-2" />
+                        <div className="text-sm font-bold text-slate-700 dark:text-slate-300">No Sales Records Available</div>
+                        <p className="text-xs text-slate-500 max-w-sm mt-1">
+                          Completed showroom purchases and verified transactions will automatically plot revenue metrics and sales volume trends here.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="h-52 w-full pt-4 relative flex items-end justify-between gap-3 px-4 pb-4">
+                        {salesTrends.map((trend, idx) => (
+                          <div key={idx} className="flex-1 flex flex-col items-center gap-1.5 h-full justify-end">
+                            <span className="text-[10px] font-mono font-bold text-slate-500">{formatCurrencyINR(trend.revenue || 0)}</span>
+                            <div 
+                              className="w-full max-w-[40px] bg-gradient-to-t from-blue-600 to-cyan-400 rounded-t-lg transition-all duration-500 hover:opacity-90"
+                              style={{ height: `${Math.max(15, Math.min(100, ((trend.revenue || 1) / (revenueData.grossRevenue || 1)) * 100))}%` }}
+                            />
+                            <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400">{trend.month || `M${idx+1}`}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   {/* Quick Actions Panel */}
@@ -1357,6 +1669,164 @@ const AdminDashboard = () => {
               </div>
             )}
 
+            {/* VIEW 2b: CUSTOMER ASSISTANCE REQUESTS */}
+            {!loading && activeTab === 'assistancerequests' && (
+              <div className="bg-white dark:bg-[#0F172A] border border-slate-200/90 dark:border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center gap-3">
+                    <div className="p-3 rounded-2xl bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-800">
+                      <HelpCircle className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white">Customer Assistance Requests</h2>
+                      <p className="text-xs text-slate-500">Monitor showroom customer inquiries, floor sales executive assignments, and resolution statuses</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <span className="px-3.5 py-1.5 rounded-full text-xs font-extrabold bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-300">
+                      {assistanceRequestsList.length} Total Requests
+                    </span>
+                    <button
+                      onClick={fetchAdminDashboardData}
+                      className="p-2 rounded-xl text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      title="Refresh Requests"
+                    >
+                      <RefreshCw className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {/* Filter Pills & Search */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  {/* Status Pills */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {[
+                      { key: 'ALL', label: 'All', count: assistanceCounts.total || assistanceRequestsList.length },
+                      { key: 'NEW', label: 'New / Pending', count: assistanceCounts.new },
+                      { key: 'IN_PROGRESS', label: 'In Progress', count: assistanceCounts.inProgress },
+                      { key: 'RESOLVED', label: 'Resolved', count: assistanceCounts.resolved },
+                      { key: 'CANCELLED', label: 'Cancelled', count: assistanceCounts.cancelled }
+                    ].map(pill => (
+                      <button
+                        key={pill.key}
+                        onClick={() => setAssistanceStatusFilter(pill.key)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                          assistanceStatusFilter === pill.key
+                            ? 'bg-purple-600 text-white shadow-xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                        }`}
+                      >
+                        <span>{pill.label}</span>
+                        {pill.count > 0 && (
+                          <span className={`px-1.5 py-0.2 rounded-full text-[10px] ${
+                            assistanceStatusFilter === pill.key ? 'bg-purple-800 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                          }`}>
+                            {pill.count}
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Search Input */}
+                  <div className="relative w-full sm:w-72">
+                    <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+                    <input
+                      type="text"
+                      value={assistanceSearchQuery}
+                      onChange={(e) => setAssistanceSearchQuery(e.target.value)}
+                      placeholder="Search customer, category, notes..."
+                      className="w-full pl-9 pr-4 py-2 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-medium focus:border-purple-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Requests Table or Empty State */}
+                {filteredAssistance.length === 0 ? (
+                  <div className="p-10 rounded-2xl bg-slate-50/50 dark:bg-slate-900/30 border border-dashed border-slate-200 dark:border-slate-800 text-center space-y-2">
+                    <HelpCircle className="w-8 h-8 text-slate-400 mx-auto" />
+                    <div className="text-sm font-bold text-slate-700 dark:text-slate-300">No Assistance Requests Found</div>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                      {assistanceStatusFilter !== 'ALL'
+                        ? `There are no assistance requests currently matching status "${assistanceStatusFilter}".`
+                        : 'When showroom customers submit assistance requests from product pages, they will appear here.'}
+                    </p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-100 dark:bg-slate-800 text-slate-500 uppercase font-mono tracking-wider text-xs">
+                        <tr>
+                          <th className="p-4">ID</th>
+                          <th className="p-4">Customer Details</th>
+                          <th className="p-4">Category / Budget</th>
+                          <th className="p-4">Customer Requirements</th>
+                          <th className="p-4">Assigned Sales Executive</th>
+                          <th className="p-4">Status</th>
+                          <th className="p-4 text-right">Requested At</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
+                        {filteredAssistance.map((req) => (
+                          <tr key={req.id || req.request_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                            <td className="p-4 font-mono font-bold text-purple-600 dark:text-purple-400">
+                              #{req.id || req.request_id}
+                            </td>
+                            <td className="p-4">
+                              <div className="font-bold text-slate-900 dark:text-white">{req.customerName || 'Customer'}</div>
+                              <div className="text-xs text-slate-500">{req.customerEmail || req.customerPhone || 'N/A'}</div>
+                            </td>
+                            <td className="p-4">
+                              <span className="font-semibold text-slate-800 dark:text-slate-200 block">
+                                {req.preferredCategory || 'General Inquiry'}
+                              </span>
+                              {req.budgetMax ? (
+                                <span className="text-xs text-slate-500 font-mono">
+                                  Budget: {formatCurrencyINR(req.budgetMin || 0)} - {formatCurrencyINR(req.budgetMax)}
+                                </span>
+                              ) : null}
+                            </td>
+                            <td className="p-4 max-w-xs">
+                              <p className="text-xs text-slate-700 dark:text-slate-300 line-clamp-2">
+                                {req.customerRequirements || 'No specific notes provided.'}
+                              </p>
+                            </td>
+                            <td className="p-4">
+                              {req.salespersonName ? (
+                                <div className="flex items-center gap-1.5 text-xs font-bold text-teal-600 dark:text-teal-400">
+                                  <UserCheck className="w-3.5 h-3.5" />
+                                  <span>{req.salespersonName}</span>
+                                </div>
+                              ) : (
+                                <span className="text-xs font-semibold text-amber-500 italic">Unassigned</span>
+                              )}
+                            </td>
+                            <td className="p-4">
+                              <span className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase ${
+                                req.status === 'NEW'
+                                  ? 'bg-amber-100 dark:bg-amber-950 text-amber-800 dark:text-amber-200 border border-amber-300 animate-pulse'
+                                  : req.status === 'IN_PROGRESS'
+                                  ? 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-300'
+                                  : req.status === 'RESOLVED'
+                                  ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300'
+                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400'
+                              }`}>
+                                {req.status}
+                              </span>
+                            </td>
+                            <td className="p-4 text-right text-xs text-slate-500 font-mono">
+                              {req.createdAt ? new Date(req.createdAt).toLocaleDateString() : 'Recent'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* VIEW 3: USER MANAGEMENT (ALL USERS, CUSTOMERS, SALESPERSONS) */}
             {!loading && (activeTab === 'users' || activeTab === 'customers' || activeTab === 'salespersons') && (
               <div className="bg-white dark:bg-[#0F172A] border border-slate-200/90 dark:border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xs">
@@ -1419,42 +1889,51 @@ const AdminDashboard = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
-                      {filteredUsers.map((u) => (
-                        <tr key={u.userId || u.user_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                          <td className="p-4 font-mono font-bold text-blue-600 dark:text-cyan-400">#{u.userId || u.user_id}</td>
-                          <td className="p-4 font-bold text-slate-900 dark:text-white">{u.fullName || u.full_name}</td>
-                          <td className="p-4 text-slate-600 dark:text-slate-300">{u.email}</td>
-                          <td className="p-4">
-                            <span className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase ${u.role === 'ADMIN'
-                                ? 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-300'
-                                : u.role === 'SALES_PERSON'
-                                  ? 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-300'
-                                  : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
-                              }`}>
-                              {u.role}
-                            </span>
-                          </td>
-                          <td className="p-4">
-                            <span className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase ${u.status === 'ACTIVE'
-                                ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300'
-                                : 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300'
-                              }`}>
-                              {u.status}
-                            </span>
-                          </td>
-                          <td className="p-4 text-right">
-                            <button
-                              onClick={() => handleToggleUserStatus(u)}
-                              className={`px-3 py-1.5 rounded-xl text-xs font-bold ${u.status === 'ACTIVE'
-                                  ? 'bg-rose-50 dark:bg-rose-950 text-rose-600 dark:text-rose-400 hover:bg-rose-100'
-                                  : 'bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100'
-                                }`}
-                            >
-                              {u.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {filteredUsers.map((u) => {
+                        const isProtected = u.email === 'optibuyadmin@gmail.com' || (u.userId || u.user_id) === (user?.userId || user?.user_id);
+                        return (
+                          <tr key={u.userId || u.user_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                            <td className="p-4 font-mono font-bold text-blue-600 dark:text-cyan-400">#{u.userId || u.user_id}</td>
+                            <td className="p-4 font-bold text-slate-900 dark:text-white">{u.fullName || u.full_name}</td>
+                            <td className="p-4 text-slate-600 dark:text-slate-300">{u.email}</td>
+                            <td className="p-4">
+                              <span className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase ${u.role === 'ADMIN'
+                                  ? 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-300 border border-purple-300'
+                                  : u.role === 'SALES_PERSON'
+                                    ? 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-300'
+                                    : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                                }`}>
+                                {u.role}
+                              </span>
+                            </td>
+                            <td className="p-4">
+                              <span className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase ${u.status === 'ACTIVE'
+                                  ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300'
+                                  : 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300'
+                                }`}>
+                                {u.status}
+                              </span>
+                            </td>
+                            <td className="p-4 text-right">
+                              {isProtected ? (
+                                <span className="px-3 py-1.5 rounded-xl text-xs font-bold text-slate-400 bg-slate-100 dark:bg-slate-800 italic">
+                                  Protected
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => handleToggleUserStatus(u)}
+                                  className={`px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors ${u.status === 'ACTIVE'
+                                      ? 'bg-rose-50 dark:bg-rose-950 text-rose-600 dark:text-rose-400 hover:bg-rose-100'
+                                      : 'bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-100'
+                                    }`}
+                                >
+                                  {u.status === 'ACTIVE' ? 'Deactivate' : 'Activate'}
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1550,7 +2029,21 @@ const AdminDashboard = () => {
                               {p.stock || p.stock_quantity} units
                             </span>
                           </td>
-                          <td className="p-4 text-right">
+                          <td className="p-4 text-right space-x-2">
+                            <button
+                              onClick={() => handleEditProduct(p)}
+                              className="p-2 rounded-xl text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950"
+                              title="Edit Product"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleOpenStockModal(p)}
+                              className="p-2 rounded-xl text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950"
+                              title="Update Stock"
+                            >
+                              <Package className="w-4 h-4" />
+                            </button>
                             <button
                               onClick={() => handleDeleteProduct(p.id || p.product_id, p.name || p.product_name)}
                               className="p-2 rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950"
@@ -1601,54 +2094,193 @@ const AdminDashboard = () => {
               </div>
             )}
 
+            {/* VIEW 5b: BRAND MANAGEMENT */}
+            {!loading && activeTab === 'brands' && (
+              <div className="bg-white dark:bg-[#0F172A] border border-slate-200/90 dark:border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">Brand Management</h2>
+                    <p className="text-xs text-slate-500">Manage product brands in PostgreSQL catalog</p>
+                  </div>
+
+                  <button
+                    onClick={() => setShowAddBrandModal(true)}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold text-white bg-indigo-600 hover:bg-indigo-700 shadow-xs cursor-pointer"
+                  >
+                    <Plus className="w-4 h-4" />
+                    <span>Add New Brand</span>
+                  </button>
+                </div>
+
+                {/* Filter & Search Controls */}
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
+                  <div className="relative w-full sm:w-80">
+                    <Search className="w-4 h-4 absolute left-3.5 top-3.5 text-slate-400" />
+                    <input
+                      type="text"
+                      value={brandSearchQuery}
+                      onChange={(e) => setBrandSearchQuery(e.target.value)}
+                      placeholder="Search brand name..."
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 text-sm font-medium focus:border-blue-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Brands Table */}
+                <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-slate-100 dark:bg-slate-800 text-slate-500 uppercase font-mono tracking-wider text-xs">
+                      <tr>
+                        <th className="p-4">ID</th>
+                        <th className="p-4">Brand Name</th>
+                        <th className="p-4">Description</th>
+                        <th className="p-4">Status</th>
+                        <th className="p-4 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
+                      {filteredBrands.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="p-8 text-center text-slate-500">
+                            No brands found
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredBrands.map((b) => (
+                          <tr key={b.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                            <td className="p-4 font-mono font-bold text-indigo-600 dark:text-indigo-400">#{b.id}</td>
+                            <td className="p-4 font-bold text-slate-900 dark:text-white">{b.name || b.brand_name}</td>
+                            <td className="p-4 text-slate-600 dark:text-slate-300 max-w-xs truncate">{b.description || 'No description'}</td>
+                            <td className="p-4">
+                              <span className={`px-2.5 py-1 rounded-full text-xs font-extrabold ${b.status === 'ACTIVE' 
+                                  ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300'
+                                  : 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 border border-rose-300'
+                                }`}>
+                                {b.status || 'ACTIVE'}
+                              </span>
+                            </td>
+                            <td className="p-4 text-right space-x-2">
+                              <button
+                                onClick={() => handleEditBrand(b)}
+                                className="p-2 rounded-xl text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950"
+                                title="Edit Brand"
+                              >
+                                <Edit3 className="w-4 h-4" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteBrand(b.id, b.name || b.brand_name)}
+                                className="p-2 rounded-xl text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950"
+                                title="Delete Brand"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             {/* VIEW 6: ORDERS & TRANSACTIONS */}
             {!loading && (activeTab === 'orders' || activeTab === 'salesoverview' || activeTab === 'transactions') && (
               <div className="bg-white dark:bg-[#0F172A] border border-slate-200/90 dark:border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xs">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
                   <div>
                     <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">
                       {activeTab === 'transactions' ? 'Transactions History' : activeTab === 'salesoverview' ? 'Revenue Analytics' : 'Orders Fulfillment'}
                     </h2>
                     <p className="text-xs text-slate-500">Live order processing and store transaction ledger from PostgreSQL</p>
                   </div>
+
+                  <span className="px-3 py-1 rounded-full text-xs font-extrabold bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300 border border-blue-300">
+                    {ordersList.length} Total Orders
+                  </span>
                 </div>
 
-                <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-100 dark:bg-slate-800 text-slate-500 uppercase font-mono tracking-wider text-xs">
-                      <tr>
-                        <th className="p-4">Order ID</th>
-                        <th className="p-4">Customer</th>
-                        <th className="p-4">Total Price (INR)</th>
-                        <th className="p-4">Payment Status</th>
-                        <th className="p-4">Fulfillment Status</th>
-                        <th className="p-4 text-right">Date</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
-                      {ordersList.map((ord) => (
-                        <tr key={ord.id || ord.order_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                          <td className="p-4 font-mono font-bold text-blue-600 dark:text-cyan-400">#{ord.id || ord.order_id}</td>
-                          <td className="p-4 font-bold text-slate-900 dark:text-white">{ord.customer || ord.full_name || 'OptiBuy Customer'}</td>
-                          <td className="p-4 font-bold text-slate-900 dark:text-white">{formatCurrencyINR(ord.total_amount || ord.price || 49990)}</td>
-                          <td className="p-4">
-                            <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300">
-                              PAID
-                            </span>
-                          </td>
-                          <td className="p-4">
-                            <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300">
-                              FULFILLED
-                            </span>
-                          </td>
-                          <td className="p-4 text-right text-xs text-slate-500">
-                            {ord.created_at ? new Date(ord.created_at).toLocaleDateString() : 'Today'}
-                          </td>
+                {ordersList.length === 0 ? (
+                  <div className="p-10 rounded-2xl bg-slate-50/50 dark:bg-slate-900/30 border border-dashed border-slate-200 dark:border-slate-800 text-center space-y-2">
+                    <ShoppingBag className="w-8 h-8 text-slate-400 mx-auto" />
+                    <div className="text-sm font-bold text-slate-700 dark:text-slate-300">No Orders in Database</div>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto">
+                      Customer orders and showroom transactions will appear here when placed.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-100 dark:bg-slate-800 text-slate-500 uppercase font-mono tracking-wider text-xs">
+                        <tr>
+                          <th className="p-4">Order ID</th>
+                          <th className="p-4">Customer</th>
+                          <th className="p-4">Total Price (INR)</th>
+                          <th className="p-4">Payment Status</th>
+                          <th className="p-4">Fulfillment Status</th>
+                          <th className="p-4">Update Status</th>
+                          <th className="p-4 text-right">Date</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
+                        {ordersList.map((ord) => {
+                          const currentStatus = ord.order_status || ord.status || 'PENDING';
+                          const paymentStatus = ord.payment_status || 'PENDING';
+                          return (
+                            <tr key={ord.id || ord.order_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                              <td className="p-4 font-mono font-bold text-blue-600 dark:text-cyan-400">#{ord.id || ord.order_id}</td>
+                              <td className="p-4 font-bold text-slate-900 dark:text-white">{ord.customer || ord.full_name || 'OptiBuy Customer'}</td>
+                              <td className="p-4 font-bold text-slate-900 dark:text-white">{formatCurrencyINR(ord.total_amount || ord.price || 0)}</td>
+                              <td className="p-4">
+                                <span className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase ${
+                                  paymentStatus === 'PAID' || paymentStatus === 'COMPLETED'
+                                    ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 border border-emerald-300'
+                                    : paymentStatus === 'FAILED'
+                                    ? 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300 border border-rose-300'
+                                    : 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300 border border-amber-300'
+                                }`}>
+                                  {paymentStatus}
+                                </span>
+                              </td>
+                              <td className="p-4">
+                                <span className={`px-2.5 py-1 rounded-full text-xs font-extrabold uppercase ${
+                                  currentStatus === 'DELIVERED' || currentStatus === 'COMPLETED'
+                                    ? 'bg-emerald-100 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300'
+                                    : currentStatus === 'SHIPPED'
+                                    ? 'bg-blue-100 dark:bg-blue-950 text-blue-700 dark:text-blue-300'
+                                    : currentStatus === 'PROCESSING'
+                                    ? 'bg-indigo-100 dark:bg-indigo-950 text-indigo-700 dark:text-indigo-300'
+                                    : currentStatus === 'CANCELLED'
+                                    ? 'bg-rose-100 dark:bg-rose-950 text-rose-700 dark:text-rose-300'
+                                    : 'bg-amber-100 dark:bg-amber-950 text-amber-700 dark:text-amber-300'
+                                }`}>
+                                  {currentStatus}
+                                </span>
+                              </td>
+                              <td className="p-4">
+                                <select
+                                  value={currentStatus}
+                                  onChange={(e) => handleUpdateOrderStatus(ord.id || ord.order_id, e.target.value)}
+                                  className="px-2.5 py-1 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:border-blue-500 cursor-pointer"
+                                >
+                                  <option value="PENDING">PENDING</option>
+                                  <option value="PROCESSING">PROCESSING</option>
+                                  <option value="SHIPPED">SHIPPED</option>
+                                  <option value="DELIVERED">DELIVERED</option>
+                                  <option value="COMPLETED">COMPLETED</option>
+                                  <option value="CANCELLED">CANCELLED</option>
+                                </select>
+                              </td>
+                              <td className="p-4 text-right text-xs text-slate-500">
+                                {ord.created_at ? new Date(ord.created_at).toLocaleDateString() : 'Today'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1689,6 +2321,13 @@ const AdminDashboard = () => {
                 <X className="w-5 h-5" />
               </button>
             </div>
+
+            {productFormError && (
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs font-bold flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-500" />
+                <span>{productFormError}</span>
+              </div>
+            )}
 
             <form onSubmit={handleAddProductSubmit} className="space-y-4 text-xs font-bold">
               <div>
@@ -1737,6 +2376,8 @@ const AdminDashboard = () => {
                   <label className="block text-slate-700 dark:text-slate-300 mb-1">Price (INR ₹)</label>
                   <input
                     type="number"
+                    min="0"
+                    step="any"
                     value={newProduct.price}
                     onChange={(e) => setNewProduct({ ...newProduct, price: e.target.value })}
                     required
@@ -1748,6 +2389,8 @@ const AdminDashboard = () => {
                   <label className="block text-slate-700 dark:text-slate-300 mb-1">Stock Quantity</label>
                   <input
                     type="number"
+                    min="0"
+                    step="1"
                     value={newProduct.stock}
                     onChange={(e) => setNewProduct({ ...newProduct, stock: e.target.value })}
                     className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
@@ -2038,6 +2681,234 @@ const AdminDashboard = () => {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* EDIT PRODUCT MODAL */}
+      {showEditProductModal && editingProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 max-w-2xl w-full space-y-5 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">Edit Product</h3>
+              <button onClick={() => { setShowEditProductModal(false); setEditingProduct(null); }} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleEditProductSubmit} className="space-y-4 text-xs font-bold">
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 mb-1">Product Name</label>
+                <input
+                  type="text"
+                  value={editProductForm.name}
+                  onChange={(e) => setEditProductForm({ ...editProductForm, name: e.target.value })}
+                  required
+                  className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-slate-700 dark:text-slate-300 mb-1">Model Number</label>
+                  <input
+                    type="text"
+                    value={editProductForm.modelNumber}
+                    onChange={(e) => setEditProductForm({ ...editProductForm, modelNumber: e.target.value })}
+                    className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 dark:text-slate-300 mb-1">Discount %</label>
+                  <input
+                    type="number"
+                    value={editProductForm.discountPercentage}
+                    onChange={(e) => setEditProductForm({ ...editProductForm, discountPercentage: e.target.value })}
+                    className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 mb-1">Description</label>
+                <textarea
+                  value={editProductForm.description}
+                  onChange={(e) => setEditProductForm({ ...editProductForm, description: e.target.value })}
+                  rows={3}
+                  className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white resize-none"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-slate-700 dark:text-slate-300 mb-1">Price (INR ₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editProductForm.price}
+                    onChange={(e) => setEditProductForm({ ...editProductForm, price: e.target.value })}
+                    required
+                    className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 dark:text-slate-300 mb-1">Original Price (INR ₹)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editProductForm.originalPrice}
+                    onChange={(e) => setEditProductForm({ ...editProductForm, originalPrice: e.target.value })}
+                    className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-slate-700 dark:text-slate-300 mb-1">Stock Quantity</label>
+                  <input
+                    type="number"
+                    value={editProductForm.stockQuantity}
+                    onChange={(e) => setEditProductForm({ ...editProductForm, stockQuantity: e.target.value })}
+                    className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-slate-700 dark:text-slate-300 mb-1">Status</label>
+                  <select
+                    value={editProductForm.status}
+                    onChange={(e) => setEditProductForm({ ...editProductForm, status: e.target.value })}
+                    className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                  >
+                    <option value="ACTIVE">Active</option>
+                    <option value="INACTIVE">Inactive</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-slate-700 dark:text-slate-300 mb-1">Category</label>
+                  <select
+                    value={editProductForm.categoryId}
+                    onChange={(e) => setEditProductForm({ ...editProductForm, categoryId: e.target.value })}
+                    className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                  >
+                    <option value="">Select Category</option>
+                    {categoriesList.map(c => (
+                      <option key={c.id || c.category_id} value={c.id || c.category_id}>
+                        {c.name || c.category_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-slate-700 dark:text-slate-300 mb-1">Brand</label>
+                  <select
+                    value={editProductForm.brandId}
+                    onChange={(e) => setEditProductForm({ ...editProductForm, brandId: e.target.value })}
+                    className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                  >
+                    <option value="">Select Brand</option>
+                    {brandsList.map(b => (
+                      <option key={b.id} value={b.id}>
+                        {b.name || b.brand_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 mb-1">Image URL</label>
+                <input
+                  type="text"
+                  value={editProductForm.image}
+                  onChange={(e) => setEditProductForm({ ...editProductForm, image: e.target.value })}
+                  className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="pt-3 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setShowEditProductModal(false); setEditingProduct(null); }}
+                  className="px-5 py-2.5 rounded-xl font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-700 cursor-pointer"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* STOCK UPDATE MODAL */}
+      {showStockModal && stockProduct && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
+          <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 max-w-md w-full space-y-5 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+              <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">Update Stock</h3>
+              <button onClick={() => { setShowStockModal(false); setStockProduct(null); }} className="text-slate-400 hover:text-slate-600">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleStockUpdateSubmit} className="space-y-4 text-xs font-bold">
+              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-700 space-y-2">
+                <p className="font-bold text-slate-900 dark:text-white">{stockProduct.name || stockProduct.product_name}</p>
+                <p className="text-sm text-slate-500">{stockProduct.brand} • {formatCurrencyINR(stockProduct.price || stockProduct.price_inr)}</p>
+                <p className="text-xs text-slate-400">Current: {stockProduct.stockQuantity || stockProduct.stock_quantity || 0} units ({stockProduct.stockStatus || 'IN_STOCK'})</p>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 mb-1">New Stock Quantity</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={stockForm.stockQuantity}
+                  onChange={(e) => setStockForm({ ...stockForm, stockQuantity: e.target.value })}
+                  required
+                  className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 mb-1">Stock Status</label>
+                <select
+                  value={stockForm.stockStatus}
+                  onChange={(e) => setStockForm({ ...stockForm, stockStatus: e.target.value })}
+                  className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                >
+                  <option value="IN_STOCK">In Stock</option>
+                  <option value="LOW_STOCK">Low Stock</option>
+                  <option value="OUT_OF_STOCK">Out of Stock</option>
+                </select>
+              </div>
+
+              <div className="pt-3 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => { setShowStockModal(false); setStockProduct(null); }}
+                  className="px-5 py-2.5 rounded-xl font-bold text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl font-bold text-white bg-amber-600 hover:bg-amber-700 cursor-pointer"
+                >
+                  <Package className="w-4 h-4 mr-2" />
+                  Update Stock
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

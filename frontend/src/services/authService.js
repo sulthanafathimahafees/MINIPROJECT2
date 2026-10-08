@@ -179,16 +179,87 @@ export const resetPassword = async (token, newPassword) => {
 };
 
 /**
- * Get current stored user
+ * Safely extract and check JWT expiration
  */
-export const getStoredUser = () => {
-  const userStr = localStorage.getItem('optibuy_user');
-  if (!userStr) return null;
+const isTokenExpired = (token) => {
+  if (!token || typeof token !== 'string') return true;
   try {
-    return JSON.parse(userStr);
-  } catch (e) {
+    const parts = token.split('.');
+    if (parts.length !== 3) return false; // not a standard JWT, let backend validate
+    const payload = JSON.parse(atob(parts[1]));
+    if (payload.exp && payload.exp * 1000 < Date.now()) {
+      return true;
+    }
+    return false;
+  } catch (err) {
+    return false;
+  }
+};
+
+/**
+ * Normalize role string across frontend
+ */
+export const getNormalizedRole = (role) => {
+  if (!role) return 'CUSTOMER';
+  const r = role.toUpperCase().trim();
+  if (r === 'SALES' || r === 'SALESPERSON' || r === 'SALES_PERSON' || r === 'SALES_EXECUTIVE' || r === 'SALES EXECUTIVE') {
+    return 'SALES_PERSON';
+  }
+  if (r === 'ADMIN' || r === 'ADMINISTRATOR') {
+    return 'ADMIN';
+  }
+  return 'CUSTOMER';
+};
+
+/**
+ * Get current stored JWT token
+ */
+export const getAuthToken = () => {
+  const token = localStorage.getItem('optibuy_token');
+  if (!token) return null;
+  if (isTokenExpired(token)) {
+    logoutUser();
     return null;
   }
+  return token;
+};
+
+/**
+ * Get current stored user with session expiry check
+ */
+export const getStoredUser = () => {
+  const token = localStorage.getItem('optibuy_token');
+  const userStr = localStorage.getItem('optibuy_user');
+  if (!token || !userStr) {
+    return null;
+  }
+
+  // Check token expiration
+  if (isTokenExpired(token)) {
+    console.warn('[authService] JWT session expired. Logging out.');
+    logoutUser();
+    return null;
+  }
+
+  try {
+    const user = JSON.parse(userStr);
+    return {
+      ...user,
+      id: user.id || user.user_id,
+      user_id: user.user_id || user.id,
+      role: getNormalizedRole(user.role)
+    };
+  } catch (e) {
+    logoutUser();
+    return null;
+  }
+};
+
+/**
+ * Check if a valid authenticated session exists
+ */
+export const isAuthenticated = () => {
+  return Boolean(getStoredUser() && getAuthToken());
 };
 
 /**

@@ -38,9 +38,16 @@ import {
   Star,
   Eye,
   CheckSquare,
-  Ban
+  Ban,
+  Target,
+  Zap,
+  LifeBuoy,
+  AlertCircle,
+  HelpCircle,
+  CheckCircle,
+  ArrowUpRight
 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { getStoredUser, logoutUser } from '../../services/authService';
 import Logo from '../../components/common/Logo';
@@ -53,8 +60,11 @@ import {
   getShowroomCustomers,
   getCustomerAssistanceRequests,
   updateAssistanceRequestStatus,
+  assignAssistanceRequest,
   createProductRecommendation,
-  getProductRecommendations
+  getProductRecommendations,
+  getTailoredMatches,
+  getSalesInventory
 } from '../../services/salesService';
 
 const SalesDashboard = () => {
@@ -102,6 +112,19 @@ const SalesDashboard = () => {
   const [recommendations, setRecommendations] = useState([]);
   const [reviewsList, setReviewsList] = useState([]);
 
+  // New states for Sprint 5
+  const [activitiesList, setActivitiesList] = useState([]);
+  const [performanceData, setPerformanceData] = useState(null);
+  const [selectedCustomer, setSelectedCustomer] = useState(null);
+  const [showCustomerDetail, setShowCustomerDetail] = useState(false);
+  const [activityForm, setActivityForm] = useState({
+    activityType: 'CUSTOMER_INTERACTION',
+    customerId: '',
+    productId: '',
+    details: ''
+  });
+  const [showActivityModal, setShowActivityModal] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [feedbackMsg, setFeedbackMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
@@ -112,6 +135,20 @@ const SalesDashboard = () => {
 
   // Spec Comparison Selection (Max 3 products)
   const [selectedCompareIds, setSelectedCompareIds] = useState([]);
+
+  // Assistance Filter & Action States
+  const [assistanceStatusFilter, setAssistanceStatusFilter] = useState('ALL');
+  const [assistanceActionLoading, setAssistanceActionLoading] = useState(false);
+
+  // Inventory Filter & Search States
+  const [inventoryStockFilter, setInventoryStockFilter] = useState('ALL');
+  const [inventorySearch, setInventorySearch] = useState('');
+
+  // Tailored Recommendation State
+  const [tailoredCustomer, setTailoredCustomer] = useState(null);
+  const [tailoredMatchesList, setTailoredMatchesList] = useState([]);
+  const [tailoredMatchesLoading, setTailoredMatchesLoading] = useState(false);
+  const [showTailoredModal, setShowTailoredModal] = useState(false);
 
   // Recommendation Form State
   const [recForm, setRecForm] = useState({
@@ -142,8 +179,8 @@ const SalesDashboard = () => {
       const s = await getSalesDashboardStats();
       if (s) setStats(s);
 
-      // 2. Fetch Products
-      const prodRes = await fetch('/api/products');
+      // 2. Fetch Products (Sales-specific inventory with stock info)
+      const prodRes = await fetch('/api/products/sales/inventory');
       const prodData = await prodRes.json();
       if (prodData.success && prodData.products) {
         setProductsList(prodData.products);
@@ -217,14 +254,69 @@ const SalesDashboard = () => {
     }
   };
 
+  // Assign Assistance Request to Self
+  const handleAssignRequest = async (requestId) => {
+    try {
+      setAssistanceActionLoading(true);
+      await assignAssistanceRequest(requestId, 'IN_PROGRESS');
+      setFeedbackMsg(`Assistance request #${requestId} assigned to you.`);
+      fetchSalesData();
+    } catch (err) {
+      alert(err.message || 'Failed to assign request.');
+    } finally {
+      setAssistanceActionLoading(false);
+    }
+  };
+
   // Update Assistance Request Status
   const handleUpdateRequestStatus = async (id, status) => {
     try {
+      setAssistanceActionLoading(true);
       await updateAssistanceRequestStatus(id, status);
-      setFeedbackMsg(`Assistance request status updated to ${status}.`);
+      setFeedbackMsg(`Assistance request #${id} status updated to ${status}.`);
       fetchSalesData();
     } catch (err) {
       alert(err.message || 'Failed to update request.');
+    } finally {
+      setAssistanceActionLoading(false);
+    }
+  };
+
+  // Open Tailored Recommendations with OptiBuy Match Scores for Customer
+  const handleOpenTailoredRecommendations = async (customerOrReq) => {
+    const customerId = customerOrReq.customerId || customerOrReq.id;
+    const customerName = customerOrReq.customerName || customerOrReq.fullName || 'Showroom Customer';
+    
+    setTailoredCustomer({
+      id: customerId,
+      name: customerName,
+      email: customerOrReq.customerEmail || customerOrReq.email || '',
+      phone: customerOrReq.customerPhone || customerOrReq.phone || '',
+      preferredCategory: customerOrReq.preferredCategory || 'Smartphones',
+      preferredBrand: customerOrReq.preferredBrand || 'All Brands',
+      budgetMin: customerOrReq.budgetMin,
+      budgetMax: customerOrReq.budgetMax,
+      preferredFeatures: customerOrReq.preferredFeatures || []
+    });
+
+    setRecForm({
+      customerId: customerId,
+      productId: customerOrReq.productId || '',
+      recommendationNote: customerOrReq.notes ? `Tailored recommendation for inquiry: "${customerOrReq.notes}". ` : ''
+    });
+
+    setShowTailoredModal(true);
+    setTailoredMatchesLoading(true);
+
+    try {
+      const data = await getTailoredMatches(customerId);
+      if (data.success && data.products) {
+        setTailoredMatchesList(data.products);
+      }
+    } catch (err) {
+      console.error('[Tailored Matches Error]', err);
+    } finally {
+      setTailoredMatchesLoading(false);
     }
   };
 
@@ -237,8 +329,9 @@ const SalesDashboard = () => {
     }
     try {
       await createProductRecommendation(recForm);
-      setFeedbackMsg('Product recommendation created successfully!');
+      setFeedbackMsg('Product recommendation created successfully and delivered to customer!');
       setShowRecModal(false);
+      setShowTailoredModal(false);
       setRecForm({ customerId: '', productId: '', recommendationNote: '' });
       fetchSalesData();
     } catch (err) {
@@ -266,6 +359,30 @@ const SalesDashboard = () => {
       p.name.toLowerCase().includes(catalogSearch.toLowerCase()) ||
       p.brand.toLowerCase().includes(catalogSearch.toLowerCase());
     return categoryMatch && searchMatch;
+  });
+
+  // Filtered Assistance Requests by Status Tab
+  const filteredAssistanceRequests = assistanceRequests.filter(r => {
+    if (assistanceStatusFilter === 'ALL') return true;
+    return r.status === assistanceStatusFilter;
+  });
+
+  // Filtered Showroom Inventory by Stock Status & Search
+  const filteredInventoryList = productsList.filter(p => {
+    const stock = Number(p.stock != null ? p.stock : (p.stock_quantity != null ? p.stock_quantity : 0));
+    if (inventoryStockFilter === 'LOW_STOCK' && (stock > 5 || stock === 0)) return false;
+    if (inventoryStockFilter === 'OUT_OF_STOCK' && stock > 0) return false;
+    if (inventorySearch.trim()) {
+      const term = inventorySearch.toLowerCase();
+      const name = (p.name || p.product_name || '').toLowerCase();
+      const brand = (p.brand || '').toLowerCase();
+      const cat = (p.category || '').toLowerCase();
+      const model = (p.modelNumber || p.model_number || '').toLowerCase();
+      if (!name.includes(term) && !brand.includes(term) && !cat.includes(term) && !model.includes(term)) {
+        return false;
+      }
+    }
+    return true;
   });
 
   // Grouped Navigation Definition
@@ -523,7 +640,7 @@ const SalesDashboard = () => {
 
         {/* MAIN WORKSPACE */}
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-          <div className="max-w-[1600px] w-full mx-auto space-y-6">
+          <div className="optibuy-container space-y-6">
 
             {feedbackMsg && (
               <div className="p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-800 dark:text-emerald-300 text-xs font-bold flex items-center justify-between">
@@ -541,202 +658,557 @@ const SalesDashboard = () => {
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                   <div>
                     <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 dark:text-white">
-                      Good morning, {user?.fullName || user?.full_name || 'Sulthana Fathima'} 👋
+                      Good morning, {user?.fullName || user?.full_name || 'Showroom Executive'} 👋
                     </h1>
                     <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 font-medium pt-1">
-                      Manage customer interactions, product recommendations and showroom sales from one place.
+                      Showroom Floor Sales Operations: Manage customer assistance requests, tailored recommendations, and monitor real stock availability.
                     </p>
                   </div>
 
                   <div className="flex items-center gap-3">
                     <button
                       onClick={() => setShowRecModal(true)}
-                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs cursor-pointer"
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white shadow-xs cursor-pointer transition-colors"
                     >
                       <Sparkles className="w-4 h-4" />
                       <span>Create Recommendation</span>
                     </button>
                     <button
                       onClick={fetchSalesData}
-                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 cursor-pointer"
+                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700/60 cursor-pointer transition-colors"
                     >
                       <RefreshCw className="w-4 h-4" />
-                      <span>Refresh</span>
+                      <span>Refresh Data</span>
                     </button>
                   </div>
                 </div>
 
-                {/* 6 Real Database KPI Cards */}
+                {/* 6 Real Database KPI Cards (Zero Fabricated Data) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
                   
                   <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs border-t-4 border-t-emerald-500">
-                    <span className="text-[11px] font-extrabold text-slate-500 uppercase">MY SALES</span>
-                    <div className="text-2xl font-extrabold text-emerald-600 dark:text-emerald-400">{formatCurrencyINR(stats.mySalesINR || 1250000)}</div>
-                    <div className="text-xs text-slate-500">Total sales generated</div>
+                    <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">MY SALES</span>
+                    <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{formatCurrencyINR(stats.mySalesINR || 0)}</div>
+                    <div className="text-xs text-slate-500">Attributed showroom sales</div>
                   </div>
 
                   <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs border-t-4 border-t-blue-500">
-                    <span className="text-[11px] font-extrabold text-slate-500 uppercase">MY ORDERS</span>
-                    <div className="text-3xl font-extrabold text-slate-900 dark:text-white">{stats.myOrdersCount || ordersList.length || 89}</div>
-                    <div className="text-xs text-slate-500">Orders handled</div>
+                    <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">MY ORDERS</span>
+                    <div className="text-3xl font-black text-slate-900 dark:text-white">{stats.myOrdersCount || 0}</div>
+                    <div className="text-xs text-slate-500">Completed store orders</div>
                   </div>
 
                   <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs border-t-4 border-t-teal-500">
-                    <span className="text-[11px] font-extrabold text-slate-500 uppercase">ACTIVE CUSTOMERS</span>
-                    <div className="text-3xl font-extrabold text-teal-600 dark:text-teal-400">{stats.activeCustomersCount || customersList.length || 5}</div>
-                    <div className="text-xs text-slate-500">Currently assisted</div>
+                    <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">ACTIVE CUSTOMERS</span>
+                    <div className="text-3xl font-black text-teal-600 dark:text-teal-400">{stats.activeCustomersCount || customersList.length || 0}</div>
+                    <div className="text-xs text-slate-500">Registered showroom visitors</div>
                   </div>
 
                   <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs border-t-4 border-t-indigo-500">
-                    <span className="text-[11px] font-extrabold text-slate-500 uppercase">PRODUCTS ASSISTED</span>
-                    <div className="text-3xl font-extrabold text-indigo-600 dark:text-indigo-400">{stats.productsAssistedCount || productsList.length || 30}</div>
-                    <div className="text-xs text-slate-500">Viewed in showroom</div>
+                    <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">CATALOG PRODUCTS</span>
+                    <div className="text-3xl font-black text-indigo-600 dark:text-indigo-400">{stats.productsAssistedCount || productsList.length || 0}</div>
+                    <div className="text-xs text-slate-500">Active showroom models</div>
                   </div>
 
                   <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs border-t-4 border-t-amber-500">
-                    <span className="text-[11px] font-extrabold text-amber-600 dark:text-amber-400 uppercase">PENDING REQUESTS</span>
-                    <div className="text-3xl font-extrabold text-amber-600 dark:text-amber-400">{assistanceRequests.filter(r => r.status === 'NEW').length}</div>
+                    <span className="text-[11px] font-extrabold text-amber-600 dark:text-amber-400 uppercase tracking-wider">PENDING INQUIRIES</span>
+                    <div className="text-3xl font-black text-amber-600 dark:text-amber-400">{stats.pendingRequestsCount ?? assistanceRequests.filter(r => r.status === 'NEW').length}</div>
                     <div className="text-xs text-amber-600 font-extrabold">Awaiting response</div>
                   </div>
 
                   <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 space-y-3 shadow-xs border-t-4 border-t-rose-500">
-                    <span className="text-[11px] font-extrabold text-slate-500 uppercase">LOW STOCK ITEMS</span>
-                    <div className="text-3xl font-extrabold text-rose-500">{productsList.filter(p => (p.stock || p.stock_quantity) <= 3).length}</div>
-                    <div className="text-xs text-rose-600 font-extrabold">Restock required</div>
+                    <span className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider">LOW STOCK ALERTS</span>
+                    <div className="text-3xl font-black text-rose-500">{stats.lowStockCount ?? productsList.filter(p => (p.stock || p.stock_quantity) <= 5 && (p.stock || p.stock_quantity) > 0).length}</div>
+                    <div className="text-xs text-rose-600 font-extrabold">≤ 5 units left</div>
                   </div>
 
                 </div>
 
-                {/* Sales Performance & Quick Assistance */}
+                {/* Sales Target & Operational Status Grid */}
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-                  <div className="lg:col-span-8 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-4">
+                  {/* Monthly Sales Target Card */}
+                  <div className="lg:col-span-6 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-5 shadow-xs">
                     <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-                      <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">Sales Performance</h3>
-                      <span className="text-xs font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950 px-3 py-1 rounded-full border border-emerald-200">
-                        {salesTimePeriod}
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                          <Target className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">Monthly Sales Target</h3>
+                          <p className="text-xs text-slate-500">Official monthly revenue goal from showroom profile</p>
+                        </div>
+                      </div>
+                      <span className="text-xs font-bold px-3 py-1 rounded-full bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                        {stats.targetProgressPct || 0}% Achieved
                       </span>
                     </div>
 
-                    <div className="h-48 w-full pt-4">
-                      <svg className="w-full h-full overflow-visible" viewBox="0 0 400 120" preserveAspectRatio="none">
-                        <defs>
-                          <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#10B981" stopOpacity="0.35" />
-                            <stop offset="100%" stopColor="#10B981" stopOpacity="0.0" />
-                          </linearGradient>
-                        </defs>
-                        <line x1="0" y1="30" x2="400" y2="30" stroke="#CBD5E1" strokeDasharray="3 3" opacity="0.3" />
-                        <line x1="0" y1="70" x2="400" y2="70" stroke="#CBD5E1" strokeDasharray="3 3" opacity="0.3" />
-                        <path d="M 0,90 Q 50,30 100,60 T 200,20 T 300,40 T 400,10 L 400,110 L 0,110 Z" fill="url(#salesGrad)" />
-                        <path d="M 0,90 Q 50,30 100,60 T 200,20 T 300,40 T 400,10" fill="none" stroke="#10B981" strokeWidth="3" strokeLinecap="round" />
-                      </svg>
+                    <div className="space-y-3">
+                      <div className="flex items-baseline justify-between">
+                        <div>
+                          <span className="text-xs font-semibold text-slate-400">Achieved Sales:</span>
+                          <div className="text-2xl font-black text-slate-900 dark:text-white">
+                            {formatCurrencyINR(stats.mySalesINR || 0)}
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-xs font-semibold text-slate-400">Monthly Target:</span>
+                          <div className="text-xl font-extrabold text-emerald-600 dark:text-emerald-400">
+                            {formatCurrencyINR(stats.monthlyTargetINR || 750000)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Progress Bar */}
+                      <div className="w-full bg-slate-100 dark:bg-slate-800 h-3.5 rounded-full overflow-hidden p-0.5 border border-slate-200 dark:border-slate-700">
+                        <div
+                          className="bg-gradient-to-r from-emerald-500 to-teal-400 h-full rounded-full transition-all duration-500"
+                          style={{ width: `${Math.min(100, stats.targetProgressPct || 0)}%` }}
+                        />
+                      </div>
+
+                      <div className="p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800 text-xs text-slate-500 leading-relaxed">
+                        {(stats.mySalesINR || 0) === 0 ? (
+                          <div className="flex items-start gap-2">
+                            <AlertCircle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+                            <span>
+                              <strong>No Completed Sales Yet:</strong> No finalized showroom orders have been attributed to your account for this monthly period yet. Customer assistance inquiries and product recommendations do not count as completed sales until an order is placed and finalized.
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="flex items-start gap-2">
+                            <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0 mt-0.5" />
+                            <span>
+                              You have achieved <strong>{stats.targetProgressPct}%</strong> of your monthly showroom target with {stats.myOrdersCount || 0} completed orders handled.
+                            </span>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Customer Assistance Action Card */}
-                  <div className="lg:col-span-4 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-4">
-                    <h3 className="text-lg font-extrabold text-slate-900 dark:text-white pb-3 border-b border-slate-100 dark:border-slate-800">
-                      Showroom Customer Assistance
-                    </h3>
-                    <div className="space-y-3">
-                      {assistanceRequests.slice(0, 2).map((req) => (
-                        <div key={req.id} className="p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-2">
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-extrabold text-slate-900 dark:text-white">{req.customerName}</span>
-                            <span className="px-2 py-0.5 text-[10px] font-extrabold rounded-md bg-amber-100 text-amber-800 uppercase">
-                              {req.status}
-                            </span>
+                  {/* Assistance Status & Inventory Health Summary */}
+                  <div className="lg:col-span-6 bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-5 shadow-xs">
+                    <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-2 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                          <LifeBuoy className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">Assistance & Stock Health</h3>
+                          <p className="text-xs text-slate-500">Live operational queues across showroom floor</p>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => setActiveTab('assistance')}
+                        className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1 cursor-pointer"
+                      >
+                        <span>View Tickets</span>
+                        <ChevronRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3">
+                      <div className="p-3.5 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-center">
+                        <span className="text-[10px] font-black uppercase text-amber-600 dark:text-amber-400">Pending</span>
+                        <div className="text-2xl font-black text-amber-600 dark:text-amber-400">
+                          {stats.pendingRequestsCount ?? assistanceRequests.filter(r => r.status === 'NEW').length}
+                        </div>
+                        <span className="text-[10px] text-slate-500">Unanswered</span>
+                      </div>
+                      <div className="p-3.5 rounded-2xl bg-blue-500/10 border border-blue-500/20 text-center">
+                        <span className="text-[10px] font-black uppercase text-blue-600 dark:text-blue-400">In Progress</span>
+                        <div className="text-2xl font-black text-blue-600 dark:text-blue-400">
+                          {stats.inProgressRequestsCount ?? assistanceRequests.filter(r => r.status === 'IN_PROGRESS').length}
+                        </div>
+                        <span className="text-[10px] text-slate-500">Assisting</span>
+                      </div>
+                      <div className="p-3.5 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-center">
+                        <span className="text-[10px] font-black uppercase text-emerald-600 dark:text-emerald-400">Completed</span>
+                        <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
+                          {stats.resolvedRequestsCount ?? assistanceRequests.filter(r => r.status === 'RESOLVED').length}
+                        </div>
+                        <span className="text-[10px] text-slate-500">Resolved</span>
+                      </div>
+                    </div>
+
+                    {/* Inventory Status Bar */}
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800 space-y-2">
+                      <div className="flex items-center justify-between text-xs font-bold text-slate-600 dark:text-slate-400">
+                        <span>Inventory Availability Status</span>
+                        <span className="text-[11px] text-slate-500">
+                          {stats.inStockCount || productsList.filter(p => (p.stock || p.stock_quantity) > 5).length} In Stock • {stats.lowStockCount || productsList.filter(p => (p.stock || p.stock_quantity) <= 5 && (p.stock || p.stock_quantity) > 0).length} Low • {stats.outOfStockCount || productsList.filter(p => (p.stock || p.stock_quantity) === 0).length} Out
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => { setActiveTab('inventory'); setInventoryStockFilter('ALL'); }}
+                          className="flex-1 py-1.5 px-2 rounded-xl text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-200 dark:hover:bg-slate-700 text-center cursor-pointer transition-colors"
+                        >
+                          Catalog ({productsList.length})
+                        </button>
+                        <button
+                          onClick={() => { setActiveTab('inventory'); setInventoryStockFilter('LOW_STOCK'); }}
+                          className="flex-1 py-1.5 px-2 rounded-xl text-xs font-bold bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 text-center cursor-pointer transition-colors"
+                        >
+                          Low Stock ({stats.lowStockCount || productsList.filter(p => (p.stock || p.stock_quantity) <= 5 && (p.stock || p.stock_quantity) > 0).length})
+                        </button>
+                        <button
+                          onClick={() => { setActiveTab('inventory'); setInventoryStockFilter('OUT_OF_STOCK'); }}
+                          className="flex-1 py-1.5 px-2 rounded-xl text-xs font-bold bg-rose-500/10 text-rose-700 dark:text-rose-400 hover:bg-rose-500/20 text-center cursor-pointer transition-colors"
+                        >
+                          Out of Stock ({stats.outOfStockCount || productsList.filter(p => (p.stock || p.stock_quantity) === 0).length})
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Showroom Customer Assistance Quick Section */}
+                <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 space-y-4 shadow-xs">
+                  <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
+                    <div className="flex items-center gap-2">
+                      <UserCheck className="w-5 h-5 text-emerald-600" />
+                      <h3 className="text-lg font-extrabold text-slate-900 dark:text-white">Active Showroom Customer Inquiries</h3>
+                    </div>
+                    <button
+                      onClick={() => setActiveTab('assistance')}
+                      className="text-xs font-bold text-emerald-600 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <span>Manage All Tickets</span>
+                      <ChevronRight className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {assistanceRequests.length === 0 ? (
+                    <div className="p-8 text-center text-slate-500 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-800">
+                      <HelpCircle className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                      <p className="text-xs font-bold text-slate-700 dark:text-slate-300">No customer assistance requests submitted yet.</p>
+                      <p className="text-[11px] text-slate-500 mt-1">Customer inquiries submitted from the showroom floor will appear here in real-time.</p>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {assistanceRequests.slice(0, 3).map((req) => (
+                        <div key={req.id} className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3 flex flex-col justify-between">
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-slate-900 dark:text-white">{req.customerName}</span>
+                              <span className={`px-2 py-0.5 text-[10px] font-extrabold rounded-md uppercase ${
+                                req.status === 'NEW' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300' :
+                                req.status === 'IN_PROGRESS' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300' :
+                                'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
+                              }`}>
+                                {req.status}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2">
+                              {req.notes || 'Inquired about product specifications'}
+                            </p>
+                            {req.productName && (
+                              <div className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400">
+                                Product: {req.productName}
+                              </div>
+                            )}
                           </div>
-                          <p className="text-xs text-slate-500">{req.notes || 'Inquired about smartphone display specs'}</p>
-                          <div className="flex justify-end gap-2 pt-1">
-                            <button
-                              onClick={() => handleUpdateRequestStatus(req.id, 'IN_PROGRESS')}
-                              className="px-2.5 py-1 text-[10px] font-bold bg-blue-600 text-white rounded-lg cursor-pointer"
-                            >
-                              Assist
-                            </button>
-                            <button
-                              onClick={() => handleUpdateRequestStatus(req.id, 'RESOLVED')}
-                              className="px-2.5 py-1 text-[10px] font-bold bg-emerald-600 text-white rounded-lg cursor-pointer"
-                            >
-                              Resolve
-                            </button>
+
+                          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                            {req.status === 'NEW' && (
+                              <button
+                                onClick={() => handleAssignRequest(req.id)}
+                                disabled={assistanceActionLoading}
+                                className="px-3 py-1.5 text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl cursor-pointer transition-colors"
+                              >
+                                Accept
+                              </button>
+                            )}
+                            {req.status === 'IN_PROGRESS' && (
+                              <>
+                                <button
+                                  onClick={() => handleOpenTailoredRecommendations(req)}
+                                  className="px-2.5 py-1.5 text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white rounded-xl flex items-center gap-1 cursor-pointer transition-colors"
+                                >
+                                  <Sparkles className="w-3.5 h-3.5" />
+                                  <span>Tailored</span>
+                                </button>
+                                <button
+                                  onClick={() => handleUpdateRequestStatus(req.id, 'RESOLVED')}
+                                  disabled={assistanceActionLoading}
+                                  className="px-2.5 py-1.5 text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl cursor-pointer transition-colors"
+                                >
+                                  Resolve
+                                </button>
+                              </>
+                            )}
+                            {req.status === 'RESOLVED' && (
+                              <span className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                <Check className="w-3.5 h-3.5" />
+                                <span>Completed</span>
+                              </span>
+                            )}
                           </div>
                         </div>
                       ))}
                     </div>
-                  </div>
+                  )}
                 </div>
               </div>
             )}
 
-            {/* TAB 2: CUSTOMER ASSISTANCE */}
-            {activeTab === 'assistance' && (
+            {/* TAB 2: CUSTOMER ASSISTANCE (Full Management with Preferences, OptiBuy Match Scores & Transitions) */}
+            {(activeTab === 'assistance' || activeTab === 'requests') && (
               <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xs">
-                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+                
+                {/* Header & Status Filter Tabs */}
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-5">
                   <div>
-                    <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white">Customer Assistance Tickets</h2>
-                    <p className="text-xs text-slate-500">Live showroom inquiries and customer product assistance requests from PostgreSQL</p>
+                    <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white">Customer Assistance Requests</h2>
+                    <p className="text-xs text-slate-500">Live showroom inquiries with customer requirements, budget preferences, and status workflow</p>
                   </div>
-                  <span className="px-3.5 py-1 rounded-full text-xs font-extrabold bg-amber-500 text-white">
-                    {assistanceRequests.filter(r => r.status === 'NEW').length} New Tickets
-                  </span>
+
+                  {/* Status Filters */}
+                  <div className="flex flex-wrap items-center gap-2">
+                    {[
+                      { id: 'ALL', label: 'All Requests', count: assistanceRequests.length },
+                      { id: 'NEW', label: 'Pending', count: assistanceRequests.filter(r => r.status === 'NEW').length },
+                      { id: 'IN_PROGRESS', label: 'In Progress', count: assistanceRequests.filter(r => r.status === 'IN_PROGRESS').length },
+                      { id: 'RESOLVED', label: 'Completed', count: assistanceRequests.filter(r => r.status === 'RESOLVED').length },
+                      { id: 'CANCELLED', label: 'Cancelled', count: assistanceRequests.filter(r => r.status === 'CANCELLED').length }
+                    ].map(tab => (
+                      <button
+                        key={tab.id}
+                        onClick={() => setAssistanceStatusFilter(tab.id)}
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                          assistanceStatusFilter === tab.id
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                        }`}
+                      >
+                        <span>{tab.label}</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                          assistanceStatusFilter === tab.id ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
+                        }`}>
+                          {tab.count}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
 
-                <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-100 dark:bg-slate-800 text-slate-500 uppercase font-mono tracking-wider text-xs">
-                      <tr>
-                        <th className="p-4">Ticket ID</th>
-                        <th className="p-4">Customer Name</th>
-                        <th className="p-4">Contact Email</th>
-                        <th className="p-4">Inquiry Type</th>
-                        <th className="p-4">Notes / Requirement</th>
-                        <th className="p-4">Status</th>
-                        <th className="p-4 text-right">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
-                      {assistanceRequests.map((req) => (
-                        <tr key={req.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                          <td className="p-4 font-mono font-bold text-emerald-600">#{req.id}</td>
-                          <td className="p-4 font-bold text-slate-900 dark:text-white">{req.customerName}</td>
-                          <td className="p-4 text-slate-600 dark:text-slate-300">{req.customerEmail}</td>
-                          <td className="p-4">
-                            <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-blue-50 dark:bg-blue-950 text-blue-600 border border-blue-200">
-                              {req.requestType}
+                {/* Empty State */}
+                {filteredAssistanceRequests.length === 0 ? (
+                  <div className="p-12 text-center bg-slate-50 dark:bg-slate-900/60 rounded-3xl border border-slate-200 dark:border-slate-800 space-y-3">
+                    <div className="w-12 h-12 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mx-auto text-slate-400">
+                      <HelpCircle className="w-6 h-6" />
+                    </div>
+                    <h4 className="text-base font-extrabold text-slate-800 dark:text-slate-200">No Assistance Requests Found</h4>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+                      {assistanceStatusFilter === 'ALL'
+                        ? 'There are currently no customer assistance tickets recorded in the PostgreSQL database.'
+                        : `No assistance requests match the status filter '${assistanceStatusFilter}'.`}
+                    </p>
+                    {assistanceStatusFilter !== 'ALL' && (
+                      <button
+                        onClick={() => setAssistanceStatusFilter('ALL')}
+                        className="px-4 py-2 text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl hover:bg-emerald-100 cursor-pointer"
+                      >
+                        Reset Status Filter
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {filteredAssistanceRequests.map((req) => (
+                      <div
+                        key={req.id}
+                        className="p-5 sm:p-6 rounded-2xl bg-slate-50 dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 space-y-4 transition-all hover:border-slate-300 dark:hover:border-slate-700"
+                      >
+                        {/* Ticket Header */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200/80 dark:border-slate-800 pb-3">
+                          <div className="flex items-center gap-3">
+                            <span className="font-mono text-sm font-extrabold text-emerald-600 dark:text-emerald-400">
+                              #{req.id}
                             </span>
-                          </td>
-                          <td className="p-4 text-slate-600 dark:text-slate-300 max-w-xs truncate">{req.notes || 'General Product Inquiry'}</td>
-                          <td className="p-4">
-                            <span className={`px-2.5 py-1 rounded-full text-xs font-extrabold ${req.status === 'NEW'
-                                ? 'bg-amber-100 text-amber-800 border border-amber-300 animate-pulse'
+                            <span className="font-extrabold text-base text-slate-900 dark:text-white">
+                              {req.customerName}
+                            </span>
+                            <span className="text-xs text-slate-500">
+                              {req.customerEmail} • {req.customerPhone || 'No Phone'}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {/* Assigned Executive Badge */}
+                            {req.salesPersonId === user?.userId ? (
+                              <span className="px-2.5 py-1 rounded-md text-[11px] font-extrabold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                Assigned to You
+                              </span>
+                            ) : req.assignedSalesPerson ? (
+                              <span className="px-2.5 py-1 rounded-md text-[11px] font-bold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                                Assigned: {req.assignedSalesPerson}
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-1 rounded-md text-[11px] font-extrabold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                                Unassigned Floor Request
+                              </span>
+                            )}
+
+                            {/* Status Badge */}
+                            <span className={`px-3 py-1 rounded-full text-xs font-black uppercase ${
+                              req.status === 'NEW'
+                                ? 'bg-amber-100 text-amber-800 border border-amber-300 animate-pulse dark:bg-amber-950 dark:text-amber-300'
                                 : req.status === 'IN_PROGRESS'
-                                  ? 'bg-blue-100 text-blue-800 border border-blue-300'
-                                  : 'bg-emerald-100 text-emerald-800 border border-emerald-300'
-                              }`}>
+                                  ? 'bg-blue-100 text-blue-800 border border-blue-300 dark:bg-blue-950 dark:text-blue-300'
+                                  : req.status === 'RESOLVED'
+                                    ? 'bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300'
+                                    : 'bg-slate-200 text-slate-700 border border-slate-300 dark:bg-slate-800 dark:text-slate-300'
+                            }`}>
                               {req.status}
                             </span>
-                          </td>
-                          <td className="p-4 text-right space-x-2">
-                            <button
-                              onClick={() => handleUpdateRequestStatus(req.id, 'IN_PROGRESS')}
-                              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-blue-600 text-white cursor-pointer"
-                            >
-                              Assist
-                            </button>
-                            <button
-                              onClick={() => handleUpdateRequestStatus(req.id, 'RESOLVED')}
-                              className="px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 text-white cursor-pointer"
-                            >
-                              Resolve
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                          </div>
+                        </div>
+
+                        {/* Ticket Details & Requirements */}
+                        <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
+                          <div className="md:col-span-8 space-y-3">
+                            <div>
+                              <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                                Customer Stated Requirements / Inquiry:
+                              </span>
+                              <p className="text-sm text-slate-700 dark:text-slate-200 font-medium mt-1 leading-relaxed bg-white dark:bg-slate-800/60 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700/60">
+                                "{req.notes || 'Customer requested assistance with consumer electronics selection and showroom pricing.'}"
+                              </p>
+                            </div>
+
+                            {/* Customer Stored Preferences Breakdown */}
+                            <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+                              {req.preferredCategory && (
+                                <span className="px-2.5 py-1 rounded-lg bg-indigo-50 dark:bg-indigo-950/60 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-800 font-bold">
+                                  Category: {req.preferredCategory}
+                                </span>
+                              )}
+                              {req.preferredBrand && (
+                                <span className="px-2.5 py-1 rounded-lg bg-teal-50 dark:bg-teal-950/60 text-teal-600 dark:text-teal-400 border border-teal-200 dark:border-teal-800 font-bold">
+                                  Brand: {req.preferredBrand}
+                                </span>
+                              )}
+                              {(req.budgetMin != null || req.budgetMax != null) && (
+                                <span className="px-2.5 py-1 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 font-bold">
+                                  Budget: {req.budgetMin ? formatCurrencyINR(req.budgetMin) : '₹0'} - {req.budgetMax ? formatCurrencyINR(req.budgetMax) : 'Open'}
+                                </span>
+                              )}
+                              {Array.isArray(req.preferredFeatures) && req.preferredFeatures.map((feat, fIdx) => (
+                                <span key={fIdx} className="px-2 py-0.5 rounded-md bg-slate-200/80 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-semibold text-[11px]">
+                                  {feat}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* Target Product (if inquiry references a specific catalog product) */}
+                          <div className="md:col-span-4 bg-white dark:bg-slate-800/60 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700/60 flex items-center gap-3">
+                            {req.productImage ? (
+                              <img src={req.productImage} alt={req.productName} className="w-14 h-14 object-cover rounded-xl shrink-0" />
+                            ) : (
+                              <div className="w-14 h-14 rounded-xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center shrink-0 text-slate-400">
+                                <Package className="w-6 h-6" />
+                              </div>
+                            )}
+                            <div className="min-w-0 space-y-1">
+                              <span className="text-[10px] font-black uppercase text-slate-400">Target Product</span>
+                              <div className="text-xs font-extrabold text-slate-900 dark:text-white truncate">
+                                {req.productName || 'General Product Inquiry'}
+                              </div>
+                              {req.productPrice && (
+                                <div className="text-xs font-black text-emerald-600 dark:text-emerald-400">
+                                  {formatCurrencyINR(req.productPrice)}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Ticket Footer & Actions */}
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-200/80 dark:border-slate-800 text-xs">
+                          <span className="text-slate-400 flex items-center gap-1.5 font-medium">
+                            <Clock className="w-3.5 h-3.5" />
+                            <span>Submitted: {req.createdAt ? new Date(req.createdAt).toLocaleString() : 'Recently'}</span>
+                          </span>
+
+                          <div className="flex items-center gap-2">
+                            {/* NEW: Accept or Cancel */}
+                            {req.status === 'NEW' && (
+                              <>
+                                <button
+                                  onClick={() => handleAssignRequest(req.id)}
+                                  disabled={assistanceActionLoading}
+                                  className="px-4 py-2 rounded-xl font-bold bg-blue-600 hover:bg-blue-700 text-white cursor-pointer shadow-xs transition-colors"
+                                >
+                                  Accept & Assist
+                                </button>
+                                <button
+                                  onClick={() => handleUpdateRequestStatus(req.id, 'CANCELLED')}
+                                  disabled={assistanceActionLoading}
+                                  className="px-3 py-2 rounded-xl font-bold bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-300 cursor-pointer transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            )}
+
+                            {/* IN_PROGRESS: Generate Tailored Recommendations or Mark Resolved */}
+                            {req.status === 'IN_PROGRESS' && (
+                              <>
+                                <button
+                                  onClick={() => handleOpenTailoredRecommendations(req)}
+                                  className="px-4 py-2 rounded-xl font-bold bg-purple-600 hover:bg-purple-700 text-white flex items-center gap-2 cursor-pointer shadow-xs transition-colors"
+                                >
+                                  <Sparkles className="w-4 h-4" />
+                                  <span>Tailored Recommendation</span>
+                                </button>
+                                <button
+                                  onClick={() => handleUpdateRequestStatus(req.id, 'RESOLVED')}
+                                  disabled={assistanceActionLoading}
+                                  className="px-4 py-2 rounded-xl font-bold bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                                >
+                                  <Check className="w-4 h-4" />
+                                  <span>Mark Completed</span>
+                                </button>
+                                <button
+                                  onClick={() => handleUpdateRequestStatus(req.id, 'CANCELLED')}
+                                  disabled={assistanceActionLoading}
+                                  className="px-3 py-2 rounded-xl font-bold bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-300 cursor-pointer transition-colors"
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            )}
+
+                            {/* RESOLVED: Re-open or recommend */}
+                            {req.status === 'RESOLVED' && (
+                              <>
+                                <button
+                                  onClick={() => handleOpenTailoredRecommendations(req)}
+                                  className="px-3.5 py-1.5 rounded-xl font-bold bg-purple-50 dark:bg-purple-950/60 text-purple-600 dark:text-purple-300 border border-purple-200 dark:border-purple-800 hover:bg-purple-100 cursor-pointer"
+                                >
+                                  View / Add Recommendation
+                                </button>
+                                <button
+                                  onClick={() => handleUpdateRequestStatus(req.id, 'IN_PROGRESS')}
+                                  disabled={assistanceActionLoading}
+                                  className="px-3.5 py-1.5 rounded-xl font-bold bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-300 cursor-pointer"
+                                >
+                                  Reopen Ticket
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+
+                      </div>
+                    ))}
+                  </div>
+                )}
+
               </div>
             )}
 
@@ -861,41 +1333,72 @@ const SalesDashboard = () => {
 
             {/* TAB 5: RECOMMENDATIONS */}
             {activeTab === 'recommendations' && (
-              <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6">
-                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xs">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
                   <div>
                     <h2 className="text-xl font-extrabold text-slate-900 dark:text-white">Product Recommendations</h2>
-                    <p className="text-xs text-slate-500">Tailored recommendation cards saved in PostgreSQL</p>
+                    <p className="text-xs text-slate-500">Tailored recommendation cards saved in PostgreSQL database</p>
                   </div>
                   <button
                     onClick={() => setShowRecModal(true)}
-                    className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 text-white flex items-center gap-2 cursor-pointer"
+                    className="px-4 py-2 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-2 cursor-pointer transition-colors"
                   >
                     <Sparkles className="w-4 h-4" />
                     <span>Create Recommendation</span>
                   </button>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {recommendations.map((r) => (
-                    <div key={r.id} className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-bold text-emerald-600">For: {r.customerName}</span>
-                        <span className="text-[10px] text-slate-400">{r.createdAt ? new Date(r.createdAt).toLocaleDateString() : 'Today'}</span>
-                      </div>
-                      <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">{r.productName}</h4>
-                      <p className="text-xs text-slate-500 leading-relaxed">{r.recommendationNote}</p>
-                      <div className="text-xs font-extrabold text-emerald-600">{formatCurrencyINR(r.productPrice || 49990)}</div>
+                {recommendations.length === 0 ? (
+                  <div className="p-12 text-center bg-slate-50 dark:bg-slate-900/60 rounded-3xl border border-slate-200 dark:border-slate-800 space-y-3">
+                    <div className="w-12 h-12 rounded-2xl bg-purple-500/10 flex items-center justify-center mx-auto text-purple-600 dark:text-purple-400">
+                      <Sparkles className="w-6 h-6" />
                     </div>
-                  ))}
-                </div>
+                    <h4 className="text-base font-extrabold text-slate-800 dark:text-slate-200">No Product Recommendations Yet</h4>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+                      You have not created any tailored recommendations yet. Open an in-progress customer inquiry from the Customer Assistance tab to generate personalized recommendations with OptiBuy Match Scores.
+                    </p>
+                    <button
+                      onClick={() => setShowRecModal(true)}
+                      className="px-4 py-2 text-xs font-bold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 cursor-pointer shadow-xs"
+                    >
+                      Create First Recommendation
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {recommendations.map((r) => (
+                      <div key={r.id} className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3 flex flex-col justify-between">
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400">For: {r.customerName}</span>
+                            <span className="text-[10px] text-slate-400">{r.createdAt ? new Date(r.createdAt).toLocaleDateString() : 'Today'}</span>
+                          </div>
+                          <div className="flex items-center gap-3 pt-1">
+                            {r.productImage && (
+                              <img src={r.productImage} alt={r.productName} className="w-12 h-12 object-cover rounded-xl shrink-0" />
+                            )}
+                            <div>
+                              <h4 className="text-sm font-extrabold text-slate-900 dark:text-white">{r.productName}</h4>
+                              {r.productPrice != null && (
+                                <div className="text-xs font-black text-emerald-600 dark:text-emerald-400">{formatCurrencyINR(r.productPrice)}</div>
+                              )}
+                            </div>
+                          </div>
+                          <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed bg-white dark:bg-slate-800/60 p-3 rounded-xl border border-slate-200 dark:border-slate-700/60">
+                            "{r.recommendationNote}"
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
             {/* TAB 6 & 7: MY ORDERS & ORDER HISTORY */}
             {(activeTab === 'orders' || activeTab === 'orderhistory') && (
               <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xs">
-                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
                   <div>
                     <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white">
                       {activeTab === 'orderhistory' ? 'Complete Order History' : 'Showroom Orders Handled'}
@@ -907,95 +1410,199 @@ const SalesDashboard = () => {
                   </span>
                 </div>
 
-                <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-100 dark:bg-slate-800 text-slate-500 uppercase font-mono tracking-wider text-xs">
-                      <tr>
-                        <th className="p-4">Order ID</th>
-                        <th className="p-4">Customer Name</th>
-                        <th className="p-4">Amount (INR)</th>
-                        <th className="p-4">Payment Status</th>
-                        <th className="p-4">Fulfillment Status</th>
-                        <th className="p-4 text-right">Order Date</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
-                      {ordersList.map((ord) => (
-                        <tr key={ord.id || ord.order_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                          <td className="p-4 font-mono font-bold text-emerald-600">#{ord.id || ord.order_id}</td>
-                          <td className="p-4 font-bold text-slate-900 dark:text-white">{ord.customer || ord.full_name || 'OptiBuy Customer'}</td>
-                          <td className="p-4 font-extrabold text-slate-900 dark:text-white">{formatCurrencyINR(ord.total_amount || ord.price || 49990)}</td>
-                          <td className="p-4">
-                            <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                              PAID
-                            </span>
-                          </td>
-                          <td className="p-4">
-                            <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-blue-100 text-blue-800 border border-blue-300">
-                              FULFILLED
-                            </span>
-                          </td>
-                          <td className="p-4 text-right text-xs text-slate-500">
-                            {ord.created_at ? new Date(ord.created_at).toLocaleDateString() : 'Today'}
-                          </td>
+                {ordersList.length === 0 ? (
+                  <div className="p-12 text-center bg-slate-50 dark:bg-slate-900/60 rounded-3xl border border-slate-200 dark:border-slate-800 space-y-3">
+                    <div className="w-12 h-12 rounded-2xl bg-blue-500/10 flex items-center justify-center mx-auto text-blue-600 dark:text-blue-400">
+                      <ShoppingBag className="w-6 h-6" />
+                    </div>
+                    <h4 className="text-base font-extrabold text-slate-800 dark:text-slate-200">No Orders Registered Yet</h4>
+                    <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+                      No customer orders have been finalized under your salesperson profile for this period. Completed customer purchases will automatically update your sales figures here.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-100 dark:bg-slate-800 text-slate-500 uppercase font-mono tracking-wider text-xs">
+                        <tr>
+                          <th className="p-4">Order ID</th>
+                          <th className="p-4">Customer Name</th>
+                          <th className="p-4">Amount (INR)</th>
+                          <th className="p-4">Payment Status</th>
+                          <th className="p-4">Fulfillment Status</th>
+                          <th className="p-4 text-right">Order Date</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
+                        {ordersList.map((ord) => (
+                          <tr key={ord.id || ord.order_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                            <td className="p-4 font-mono font-bold text-emerald-600">#{ord.id || ord.order_id}</td>
+                            <td className="p-4 font-bold text-slate-900 dark:text-white">{ord.customer || ord.full_name || 'OptiBuy Customer'}</td>
+                            <td className="p-4 font-extrabold text-slate-900 dark:text-white">{formatCurrencyINR(ord.total_amount || ord.price || 0)}</td>
+                            <td className="p-4">
+                              <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                                {ord.payment_status || 'PAID'}
+                              </span>
+                            </td>
+                            <td className="p-4">
+                              <span className="px-2.5 py-1 rounded-full text-xs font-extrabold bg-blue-100 text-blue-800 border border-blue-300">
+                                {ord.order_status || 'FULFILLED'}
+                              </span>
+                            </td>
+                            <td className="p-4 text-right text-xs text-slate-500">
+                              {ord.created_at ? new Date(ord.created_at).toLocaleDateString() : 'Today'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
 
-            {/* TAB 8 & 9: INVENTORY & LOW STOCK */}
+            {/* TAB 8 & 9: INVENTORY & LOW STOCK (Live stock with filters & Read-only enforcement) */}
             {(activeTab === 'inventory' || activeTab === 'lowstock') && (
               <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xs">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                
+                {/* Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
                   <div>
                     <h2 className="text-2xl font-extrabold text-slate-900 dark:text-white">
                       {activeTab === 'lowstock' ? 'Low Stock Inventory Alerts' : 'Showroom Product Availability'}
                     </h2>
-                    <p className="text-xs text-slate-500">Live stock levels in PostgreSQL catalog</p>
+                    <p className="text-xs text-slate-500">Real-time stock quantities from PostgreSQL product inventory</p>
                   </div>
-                  <span className="px-4 py-1.5 rounded-full text-xs font-extrabold bg-rose-500 text-white">
-                    {productsList.filter(p => (p.stock || p.stock_quantity) <= 3).length} Low Stock Items
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="px-3.5 py-1.5 rounded-full text-xs font-black bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20">
+                      {productsList.filter(p => Number(p.stock != null ? p.stock : p.stock_quantity) <= 5 && Number(p.stock != null ? p.stock : p.stock_quantity) > 0).length} Low Stock
+                    </span>
+                    <span className="px-3.5 py-1.5 rounded-full text-xs font-black bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                      {productsList.filter(p => Number(p.stock != null ? p.stock : p.stock_quantity) === 0).length} Out of Stock
+                    </span>
+                  </div>
                 </div>
 
-                <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
-                  <table className="w-full text-left text-sm">
-                    <thead className="bg-slate-100 dark:bg-slate-800 text-slate-500 uppercase font-mono tracking-wider text-xs">
-                      <tr>
-                        <th className="p-4">ID</th>
-                        <th className="p-4">Product Name</th>
-                        <th className="p-4">Brand</th>
-                        <th className="p-4">Category</th>
-                        <th className="p-4">Price (INR)</th>
-                        <th className="p-4">Available Stock</th>
-                        <th className="p-4 text-right">Stock Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
-                      {(activeTab === 'lowstock' ? productsList.filter(p => (p.stock || p.stock_quantity) <= 3) : productsList).map((p) => (
-                        <tr key={p.id || p.product_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                          <td className="p-4 font-mono font-bold text-emerald-600">#{p.id || p.product_id}</td>
-                          <td className="p-4 font-bold text-slate-900 dark:text-white flex items-center gap-3">
-                            <img src={p.image || p.main_image_url} alt={p.name} className="w-8 h-8 object-cover rounded-lg shrink-0" />
-                            <span>{p.name || p.product_name}</span>
-                          </td>
-                          <td className="p-4 text-slate-600 dark:text-slate-300">{p.brand}</td>
-                          <td className="p-4 text-slate-600 dark:text-slate-300">{p.category}</td>
-                          <td className="p-4 font-bold text-slate-900 dark:text-white">{formatCurrencyINR(p.price || p.price_inr)}</td>
-                          <td className="p-4 font-bold">{p.stock || p.stock_quantity} units</td>
-                          <td className="p-4 text-right">
-                            <span className={`px-2.5 py-1 rounded-full text-xs font-extrabold ${(p.stock || p.stock_quantity) <= 3 ? 'bg-rose-100 text-rose-800 border border-rose-300 animate-pulse' : 'bg-emerald-100 text-emerald-800 border border-emerald-300'}`}>
-                              {(p.stock || p.stock_quantity) <= 3 ? 'LOW STOCK' : 'IN STOCK'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                {/* Read-Only Notice Banner for Sales Executives */}
+                <div className="p-4 rounded-2xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 flex items-start gap-3">
+                  <Shield className="w-5 h-5 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
+                  <div className="text-xs text-slate-600 dark:text-slate-300 space-y-1">
+                    <div className="font-extrabold text-blue-700 dark:text-blue-300">
+                      Showroom Floor Inventory View (Read-Only)
+                    </div>
+                    <p>
+                      Sales Executives have real-time visibility into product inventory to guide showroom customers on availability and delivery times. Modifying stock levels, adjusting unit counts, or updating supplier pricing is strictly restricted to Showroom Administrators.
+                    </p>
+                  </div>
                 </div>
+
+                {/* Filter & Search Bar */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {[
+                      { id: 'ALL', label: 'All Products', count: productsList.length },
+                      { id: 'LOW_STOCK', label: 'Low Stock (≤ 5)', count: productsList.filter(p => Number(p.stock != null ? p.stock : p.stock_quantity) <= 5 && Number(p.stock != null ? p.stock : p.stock_quantity) > 0).length },
+                      { id: 'OUT_OF_STOCK', label: 'Out of Stock (0)', count: productsList.filter(p => Number(p.stock != null ? p.stock : p.stock_quantity) === 0).length }
+                    ].map(tab => (
+                      <button
+                        key={tab.id}
+                        onClick={() => setInventoryStockFilter(tab.id)}
+                        className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5 ${
+                          inventoryStockFilter === tab.id
+                            ? 'bg-emerald-600 text-white shadow-xs'
+                            : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                        }`}
+                      >
+                        <span>{tab.label}</span>
+                        <span className={`px-1.5 py-0.2 rounded-full text-[10px] font-black ${
+                          inventoryStockFilter === tab.id ? 'bg-white/20 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
+                        }`}>
+                          {tab.count}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="relative max-w-xs w-full">
+                    <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      placeholder="Search showroom inventory..."
+                      value={inventorySearch}
+                      onChange={(e) => setInventorySearch(e.target.value)}
+                      className="w-full pl-9 pr-3.5 py-1.5 rounded-xl text-xs font-medium border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                    />
+                  </div>
+                </div>
+
+                {/* Inventory Table */}
+                {filteredInventoryList.length === 0 ? (
+                  <div className="p-12 text-center bg-slate-50 dark:bg-slate-900/60 rounded-3xl border border-slate-200 dark:border-slate-800 space-y-2">
+                    <AlertTriangle className="w-8 h-8 text-slate-400 mx-auto mb-2" />
+                    <h4 className="text-sm font-extrabold text-slate-800 dark:text-slate-200">No Matching Inventory Items</h4>
+                    <p className="text-xs text-slate-500">No products match your selected stock filter or search keyword.</p>
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+                    <table className="w-full text-left text-sm">
+                      <thead className="bg-slate-100 dark:bg-slate-800 text-slate-500 uppercase font-mono tracking-wider text-xs">
+                        <tr>
+                          <th className="p-4">ID</th>
+                          <th className="p-4">Product Name & Model</th>
+                          <th className="p-4">Brand</th>
+                          <th className="p-4">Category</th>
+                          <th className="p-4">Price (INR)</th>
+                          <th className="p-4">Available Stock</th>
+                          <th className="p-4 text-right">Stock Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
+                        {filteredInventoryList.map((p) => {
+                          const stock = Number(p.stock != null ? p.stock : (p.stock_quantity != null ? p.stock_quantity : 0));
+                          return (
+                            <tr key={p.id || p.product_id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                              <td className="p-4 font-mono font-bold text-emerald-600">#{p.id || p.product_id}</td>
+                              <td className="p-4 font-bold text-slate-900 dark:text-white flex items-center gap-3">
+                                {p.image || p.main_image_url ? (
+                                  <img src={p.image || p.main_image_url} alt={p.name} className="w-10 h-10 object-cover rounded-xl shrink-0" />
+                                ) : (
+                                  <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center shrink-0 text-slate-400">
+                                    <Package className="w-5 h-5" />
+                                  </div>
+                                )}
+                                <div>
+                                  <div className="font-extrabold">{p.name || p.product_name}</div>
+                                  {(p.modelNumber || p.model_number) && (
+                                    <div className="text-[11px] text-slate-400 font-mono font-medium">{p.modelNumber || p.model_number}</div>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="p-4 text-slate-600 dark:text-slate-300">{p.brand}</td>
+                              <td className="p-4 text-slate-600 dark:text-slate-300">{p.category}</td>
+                              <td className="p-4 font-extrabold text-slate-900 dark:text-white">{formatCurrencyINR(p.price || p.price_inr)}</td>
+                              <td className="p-4 font-black">
+                                <span className={stock === 0 ? 'text-rose-600 dark:text-rose-400' : stock <= 5 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}>
+                                  {stock} units
+                                </span>
+                              </td>
+                              <td className="p-4 text-right">
+                                <span className={`px-2.5 py-1 rounded-full text-xs font-black uppercase ${
+                                  stock === 0
+                                    ? 'bg-rose-100 text-rose-800 border border-rose-300 dark:bg-rose-950 dark:text-rose-300'
+                                    : stock <= 5
+                                      ? 'bg-amber-100 text-amber-800 border border-amber-300 animate-pulse dark:bg-amber-950 dark:text-amber-300'
+                                      : 'bg-emerald-100 text-emerald-800 border border-emerald-300 dark:bg-emerald-950 dark:text-emerald-300'
+                                }`}>
+                                  {stock === 0 ? 'OUT OF STOCK' : stock <= 5 ? 'LOW STOCK' : 'IN STOCK'}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
 
@@ -1093,7 +1700,7 @@ const SalesDashboard = () => {
         </main>
       </div>
 
-      {/* CREATE RECOMMENDATION MODAL */}
+      {/* CREATE GENERAL RECOMMENDATION MODAL */}
       {showRecModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
           <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 max-w-md w-full space-y-5 shadow-2xl">
@@ -1103,6 +1710,22 @@ const SalesDashboard = () => {
             </div>
 
             <form onSubmit={handleCreateRecSubmit} className="space-y-4 text-xs font-bold">
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 mb-1">Select Customer (Optional)</label>
+                <select
+                  value={recForm.customerId}
+                  onChange={(e) => setRecForm({ ...recForm, customerId: e.target.value })}
+                  className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                >
+                  <option value="">-- General Showroom Visitor --</option>
+                  {customersList.map(c => (
+                    <option key={c.id || c.userId} value={c.id || c.userId}>
+                      {c.name || c.fullName} ({c.email})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label className="block text-slate-700 dark:text-slate-300 mb-1">Select Product</label>
                 <select
@@ -1125,7 +1748,7 @@ const SalesDashboard = () => {
                 <textarea
                   value={recForm.recommendationNote}
                   onChange={(e) => setRecForm({ ...recForm, recommendationNote: e.target.value })}
-                  placeholder="e.g. Recommended because this flagship model provides higher battery backup within INR budget."
+                  placeholder="e.g. Recommended because this model provides superior display quality and battery life within INR budget."
                   rows={3}
                   required
                   className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
@@ -1134,9 +1757,198 @@ const SalesDashboard = () => {
 
               <div className="pt-3 flex justify-end gap-3">
                 <button type="button" onClick={() => setShowRecModal(false)} className="px-4 py-2 rounded-xl text-slate-500">Cancel</button>
-                <button type="submit" className="px-5 py-2.5 rounded-xl font-bold text-white bg-emerald-600 cursor-pointer">Save Recommendation</button>
+                <button type="submit" className="px-5 py-2.5 rounded-xl font-bold text-white bg-emerald-600 hover:bg-emerald-700 cursor-pointer transition-colors">Save Recommendation</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* TAILORED RECOMMENDATIONS MODAL (OptiBuy Match Score Engine) */}
+      {showTailoredModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-sm overflow-y-auto">
+          <div className="bg-white dark:bg-[#0F172A] border border-slate-200 dark:border-slate-800 rounded-3xl p-6 sm:p-7 max-w-2xl w-full space-y-5 shadow-2xl my-8">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-purple-500/10 text-purple-600 dark:text-purple-400">
+                  <Sparkles className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-xl font-extrabold text-slate-900 dark:text-white">
+                    Tailored Recommendations Engine
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Reusing OptiBuy Product Match Score Algorithm for {tailoredCustomer?.name}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowTailoredModal(false)}
+                className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Customer Stated Requirements & Preferences Banner */}
+            <div className="p-4 rounded-2xl bg-purple-50/70 dark:bg-purple-950/30 border border-purple-200/80 dark:border-purple-900/40 space-y-2">
+              <div className="flex items-center justify-between text-xs font-bold text-purple-900 dark:text-purple-200">
+                <span>Customer Preferences & Budget Constraints</span>
+                <span className="text-[11px] text-purple-700 dark:text-purple-400">{tailoredCustomer?.email}</span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 pt-1 text-xs">
+                <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-purple-200 dark:border-purple-800 font-bold text-purple-700 dark:text-purple-300">
+                  Category: {tailoredCustomer?.preferredCategory || 'Any'}
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-purple-200 dark:border-purple-800 font-bold text-purple-700 dark:text-purple-300">
+                  Brand: {tailoredCustomer?.preferredBrand || 'Any'}
+                </span>
+                <span className="px-2.5 py-1 rounded-lg bg-white dark:bg-slate-800 border border-purple-200 dark:border-purple-800 font-bold text-purple-700 dark:text-purple-300">
+                  Budget: {tailoredCustomer?.budgetMin ? formatCurrencyINR(tailoredCustomer.budgetMin) : '₹0'} - {tailoredCustomer?.budgetMax ? formatCurrencyINR(tailoredCustomer.budgetMax) : 'Open'}
+                </span>
+                {Array.isArray(tailoredCustomer?.preferredFeatures) && tailoredCustomer.preferredFeatures.map((f, i) => (
+                  <span key={i} className="px-2 py-0.5 rounded-md bg-purple-200/60 dark:bg-purple-900/60 text-purple-800 dark:text-purple-200 text-[11px] font-semibold">
+                    {f}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* Match Scores List */}
+            <div className="space-y-3">
+              <span className="text-xs font-extrabold uppercase text-slate-400 tracking-wider">
+                Top Catalog Matches (Calculated Match Scores)
+              </span>
+
+              {tailoredMatchesLoading ? (
+                <div className="p-8 text-center text-slate-500 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-2">
+                  <RefreshCw className="w-6 h-6 animate-spin text-purple-600 mx-auto" />
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-300">Evaluating showroom inventory with OptiBuy Match Scoring...</p>
+                </div>
+              ) : tailoredMatchesList.length === 0 ? (
+                <div className="p-6 text-center text-slate-500 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
+                  <p className="text-xs font-bold">No active products found matching customer criteria.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-64 overflow-y-auto pr-1">
+                  {tailoredMatchesList.slice(0, 4).map((item) => (
+                    <div
+                      key={item.id || item.productId}
+                      className={`p-3.5 rounded-2xl border transition-all text-left flex flex-col justify-between ${
+                        recForm.productId === (item.id || item.productId)
+                          ? 'border-purple-600 bg-purple-50/50 dark:bg-purple-950/40 ring-2 ring-purple-500/20'
+                          : 'border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-extrabold text-blue-600 uppercase">{item.brand}</span>
+                          <span className={`px-2 py-0.5 rounded-md text-[11px] font-black ${
+                            item.matchScore >= 75
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                              : item.matchScore >= 50
+                                ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                                : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                          }`}>
+                            {item.matchScore}% Match
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2.5">
+                          {item.image && (
+                            <img src={item.image} alt={item.name} className="w-10 h-10 object-cover rounded-xl shrink-0" />
+                          )}
+                          <div className="min-w-0">
+                            <h4 className="text-xs font-extrabold text-slate-900 dark:text-white truncate">{item.name}</h4>
+                            <div className="text-xs font-black text-emerald-600 dark:text-emerald-400">{formatCurrencyINR(item.price)}</div>
+                          </div>
+                        </div>
+
+                        {/* Breakdown pills */}
+                        <div className="flex flex-wrap gap-1 text-[10px] font-semibold text-slate-500 pt-1">
+                          <span className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                            Budget: {item.matchDetails?.budgetScore}/40
+                          </span>
+                          <span className="px-1.5 py-0.5 rounded bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                            Specs: {item.matchDetails?.featureScore}/20
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRecForm({
+                            ...recForm,
+                            productId: item.id || item.productId,
+                            recommendationNote: `Recommended ${item.name} (OptiBuy Match Score: ${item.matchScore}%) because it offers the highest compatibility with your stated preferences and budget.`
+                          });
+                        }}
+                        className={`mt-2 w-full py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-colors ${
+                          recForm.productId === (item.id || item.productId)
+                            ? 'bg-purple-600 text-white'
+                            : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 hover:bg-slate-100'
+                        }`}
+                      >
+                        {recForm.productId === (item.id || item.productId) ? 'Selected for Recommendation' : 'Select This Match'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Recommendation Form & Submission */}
+            <form onSubmit={handleCreateRecSubmit} className="space-y-4 pt-3 border-t border-slate-100 dark:border-slate-800 text-xs font-bold">
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 mb-1">Chosen Product</label>
+                <select
+                  value={recForm.productId}
+                  onChange={(e) => setRecForm({ ...recForm, productId: e.target.value })}
+                  required
+                  className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                >
+                  <option value="">-- Choose or select from matches above --</option>
+                  {productsList.map(p => (
+                    <option key={p.id || p.product_id} value={p.id || p.product_id}>
+                      {p.name || p.product_name} ({formatCurrencyINR(p.price || p.price_inr)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-slate-700 dark:text-slate-300 mb-1">Tailored Note for Customer</label>
+                <textarea
+                  value={recForm.recommendationNote}
+                  onChange={(e) => setRecForm({ ...recForm, recommendationNote: e.target.value })}
+                  rows={3}
+                  required
+                  placeholder="Explain why this product is suitable for customer's needs and showroom budget..."
+                  className="w-full p-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="pt-2 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setShowTailoredModal(false)}
+                  className="px-4 py-2 rounded-xl text-slate-500 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl font-bold text-white bg-purple-600 hover:bg-purple-700 cursor-pointer shadow-xs transition-colors flex items-center gap-1.5"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span>Deliver Tailored Recommendation</span>
+                </button>
+              </div>
+            </form>
+
           </div>
         </div>
       )}
