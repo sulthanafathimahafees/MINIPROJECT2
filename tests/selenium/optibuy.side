@@ -1,0 +1,366 @@
+{
+  "id": "c1f7a83d-e421-4f1b-90df-a07e153b6e01",
+  "version": "2.0",
+  "name": "OptiBuy Decision Support Ecosystem",
+  "url": "http://localhost:5173",
+  "tests": [
+    {
+      "id": "e4b2d9a1-0f2c-47bc-8ef1-a7962c019d11",
+      "name": "TC_SEL_01_Customer_Authentication",
+      "commands": [
+        {
+          "id": "cmd-01-01",
+          "comment": "Open Login Page",
+          "command": "open",
+          "target": "/login",
+          "targets": [],
+          "value": ""
+        },
+        {
+          "id": "cmd-01-02",
+          "comment": "Set Browser Viewport Size",
+          "command": "setWindowSize",
+          "target": "1280x800",
+          "targets": [],
+          "value": ""
+        },
+        {
+          "id": "cmd-01-03",
+          "comment": "Focus Customer Email Input",
+          "command": "click",
+          "target": "id=email-input",
+          "targets": [
+            ["id=email-input", "id"],
+            ["css=#email-input", "css:finder"],
+            ["xpath=//input[@id='email-input']", "xpath:attributes"]
+          ],
+          "value": ""
+        },
+        {
+          "id": "cmd-01-04",
+          "comment": "Type Verified Customer Email",
+          "command": "type",
+          "target": "id=email-input",
+          "targets": [
+            ["id=email-input", "id"],
+            ["css=#email-input", "css:finder"]
+          ],
+          "value": "aryadileep@gmail.com"
+        },
+        {
+          "id": "cmd-01-05",
+          "comment": "Focus Customer Password Input",
+          "command": "click",
+          "target": "id=password-input",
+          "targets": [
+            ["id=password-input", "id"],
+            ["css=#password-input", "css:finder"],
+            ["xpath=//input[@id='password-input']", "xpath:attributes"]
+          ],
+          "value": ""
+        },
+        {
+          "id": "cmd-01-06",
+          "comment": "Type Verified Password",
+          "command": "type",
+          "target": "id=password-input",
+          "targets": [
+            ["id=password-input", "id"],
+            ["css=#password-input", "css:finder"]
+          ],
+          "value": "password123"
+        },
+        {
+          "id": "cmd-01-07",
+          "comment": "Click Login Submit Button",
+          "command": "click",
+          "target": "id=login-submit-btn",
+          "targets": [
+            ["id=login-submit-btn", "id"],
+            ["css=#login-submit-btn", "css:finder"],
+            ["xpath=//button[@id='login-submit-btn']", "xpath:attributes"]
+          ],
+          "value": ""
+        },
+        {
+          "id": "cmd-01-08",
+          "comment": "Wait for Customer Dashboard Header",
+          "command": "waitForElementPresent",
+          "target": "id=dashboard-header",
+          "targets": [
+            ["id=dashboard-header", "id"],
+            ["css=#dashboard-header", "css:finder"]
+          ],
+          "value": "5000"
+        },
+        {
+          "id": "cmd-01-09",
+          "comment": "Verify Welcome Message Contains Customer Name",
+          "command": "assertText",
+          "target": "id=dashboard-header",
+          "targets": [
+            ["id=dashboard-header", "id"]
+          ],
+          "value": "Welcome back, Arya Dileep!"
+        }
+      ]
+    },
+    {
+      "id": "a9c3d4f2-51bc-4e67-9d7a-18b34c229e02",
+      "name": "TC_SEL_02_Catalog_And_Category_Filter",
+      "commands": [
+        {
+          "id": "cmd-02-01",
+          "comment": "Open Products Catalog Page",
+          "command": "open",
+          "target": "/products",
+          "targets": [],
+          "value": ""
+        },
+        {
+          "id": "cmd-02-02",
+          "comment": "Set Browser Window Size",
+          "command": "setWindowSize",
+          "target": "1280x800",
+          "targets": [],
+          "value": ""
+        },
+        {
+          "id": "cmd-02-03",
+          "comment": "Wait for Smartphones Category Filter",
+          "command": "waitForElementPresent",
+          "target": "id=category-smartphones",
+          "targets": [
+            ["id=category-smartphones", "id"],
+            ["css=#category-smartphones", "css:finder"]
+          ],
+          "value": "5000"
+        },
+        {
+          "id": "cmd-02-04",
+          "comment": "Filter by Smartphones",
+          "command": "click",
+          "target": "id=category-smartphones",
+          "targets": [
+            ["id=category-smartphones", "id"]
+          ],
+          "value": ""
+        },
+        {
+          "id": "cmd-02-05",
+          "comment": "Pause for Rendering",
+          "command": "pause",
+          "target": "500",
+          "targets": [],
+          "value": ""
+        },
+        {
+          "id": "cmd-02-06",
+          "comment": "Filter by Laptops",
+          "command": "click",
+          "target": "id=category-laptops",
+          "targets": [
+            ["id=category-laptops", "id"],
+            ["css=#category-laptops", "css:finder"]
+          ],
+          "value": ""
+        },
+        {
+          "id": "cmd-02-07",
+          "comment": "Pause for Rendering",
+          "command": "pause",
+          "target": "500",
+          "targets": [],
+          "value": ""
+        },
+        {
+          "id": "cmd-02-08",
+          "comment": "Filter by Smart TVs",
+          "command": "click",
+          "target": "id=category-smart-tvs",
+          "targets": [
+            ["id=category-smart-tvs", "id"]
+          ],
+          "value": ""
+        },
+        {
+          "id": "cmd-02-09",
+          "comment": "Verify Page Title",
+          "command": "assertTitle",
+          "target": "OptiBuy | Smart Choices. Smarter Shopping.",
+          "targets": [],
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "b3e5f1a8-82cd-41e9-a417-09d47c338f03",
+      "name": "TC_SEL_03_Public_Navigation_Flow",
+      "commands": [
+        {
+          "id": "cmd-03-01",
+          "comment": "Navigate to Home Page",
+          "command": "open",
+          "target": "/",
+          "targets": [],
+          "value": ""
+        },
+        {
+          "id": "cmd-03-02",
+          "comment": "Set Browser Dimensions",
+          "command": "setWindowSize",
+          "target": "1280x800",
+          "targets": [],
+          "value": ""
+        },
+        {
+          "id": "cmd-03-03",
+          "comment": "Navigate to About Us Page",
+          "command": "open",
+          "target": "/about",
+          "targets": [],
+          "value": ""
+        },
+        {
+          "id": "cmd-03-04",
+          "comment": "Pause to Verify About Content",
+          "command": "pause",
+          "target": "600",
+          "targets": [],
+          "value": ""
+        },
+        {
+          "id": "cmd-03-05",
+          "comment": "Navigate to Contact Page",
+          "command": "open",
+          "target": "/contact",
+          "targets": [],
+          "value": ""
+        },
+        {
+          "id": "cmd-03-06",
+          "comment": "Pause to Verify Contact Form",
+          "command": "pause",
+          "target": "600",
+          "targets": [],
+          "value": ""
+        },
+        {
+          "id": "cmd-03-07",
+          "comment": "Navigate to Join As Sales Person Page",
+          "command": "open",
+          "target": "/join-as-sales-person",
+          "targets": [],
+          "value": ""
+        },
+        {
+          "id": "cmd-03-08",
+          "comment": "Verify Sales Person Request Page",
+          "command": "assertTitle",
+          "target": "OptiBuy | Smart Choices. Smarter Shopping.",
+          "targets": [],
+          "value": ""
+        }
+      ]
+    },
+    {
+      "id": "d7c8e9f0-12ab-4bc8-8832-72a15c449e04",
+      "name": "TC_SEL_04_Administrator_Authentication",
+      "commands": [
+        {
+          "id": "cmd-04-01",
+          "comment": "Open Login Page for Admin Authentication",
+          "command": "open",
+          "target": "/login",
+          "targets": [],
+          "value": ""
+        },
+        {
+          "id": "cmd-04-02",
+          "comment": "Set Window Size",
+          "command": "setWindowSize",
+          "target": "1280x800",
+          "targets": [],
+          "value": ""
+        },
+        {
+          "id": "cmd-04-03",
+          "comment": "Focus Admin Email Input",
+          "command": "click",
+          "target": "id=email-input",
+          "targets": [
+            ["id=email-input", "id"]
+          ],
+          "value": ""
+        },
+        {
+          "id": "cmd-04-04",
+          "comment": "Type Admin Email",
+          "command": "type",
+          "target": "id=email-input",
+          "targets": [
+            ["id=email-input", "id"]
+          ],
+          "value": "optibuyadmin@gmail.com"
+        },
+        {
+          "id": "cmd-04-05",
+          "comment": "Focus Admin Password Input",
+          "command": "click",
+          "target": "id=password-input",
+          "targets": [
+            ["id=password-input", "id"]
+          ],
+          "value": ""
+        },
+        {
+          "id": "cmd-04-06",
+          "comment": "Type Admin Password",
+          "command": "type",
+          "target": "id=password-input",
+          "targets": [
+            ["id=password-input", "id"]
+          ],
+          "value": "admin@123"
+        },
+        {
+          "id": "cmd-04-07",
+          "comment": "Click Login Submit Button",
+          "command": "click",
+          "target": "id=login-submit-btn",
+          "targets": [
+            ["id=login-submit-btn", "id"]
+          ],
+          "value": ""
+        },
+        {
+          "id": "cmd-04-08",
+          "comment": "Wait for Redirection to Admin Dashboard",
+          "command": "pause",
+          "target": "1500",
+          "targets": [],
+          "value": ""
+        }
+      ]
+    }
+  ],
+  "suites": [
+    {
+      "id": "s1a2b3c4-9876-4321-abcd-112233445566",
+      "name": "OptiBuy Comprehensive Selenium E2E Suite",
+      "persistSession": false,
+      "parallel": false,
+      "timeout": 300,
+      "tests": [
+        "e4b2d9a1-0f2c-47bc-8ef1-a7962c019d11",
+        "a9c3d4f2-51bc-4e67-9d7a-18b34c229e02",
+        "b3e5f1a8-82cd-41e9-a417-09d47c338f03",
+        "d7c8e9f0-12ab-4bc8-8832-72a15c449e04"
+      ]
+    }
+  ],
+  "urls": [
+    "http://localhost:5173"
+  ],
+  "plugins": []
+}
