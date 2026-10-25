@@ -46,3 +46,8 @@ Thumbs.db
 scratch/
 coverage/
 .nyc_output/
+
+# Academic Overleaf reports & archives
+OptiBuy_Overleaf_Report/
+*.zip
+backend/scripts/generate_overleaf_figures.py
